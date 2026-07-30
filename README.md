@@ -113,7 +113,7 @@ uv run ruff check
 - `security/` — scanner runners, SARIF/gitleaks parsers, custom rules, pre-commit scanner
 - `core/` — config, DB, crypto (Fernet), Langfuse tracing
 - `evals/` — vulnerable-sample dataset + detection metrics
-- `docs/` — [project guide](docs/PROJECT_GUIDE.md), [interview Q&A](docs/INTERVIEW_QA.md), ADRs
+- `docs/` — architecture docs and ADRs
 
 ## Safety model
 
