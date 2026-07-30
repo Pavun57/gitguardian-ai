@@ -1,13 +1,25 @@
-"""Fix generation node — Claude produces a full-file rewrite + a pytest suite.
+"""Fix generation node — the connected coding agent produces a full-file
+rewrite + a pytest suite.
 
 Design (ADR-0001): full-file rewrite, not unified diff. Deterministically
-applicable, trivially validatable. The model emits fix AND test in one forced
-tool-use call so they share its understanding of intent.
+applicable, trivially validatable. The fix AND test come from one call so they
+share the model's understanding of intent.
+
+Backends: 'anthropic' uses LangChain forced tool-use (guaranteed structure).
+CLI backends (claude_code, codex) get the same schema embedded in the prompt;
+their output is extracted and validated against the identical FixResult model.
 """
 
 from pathlib import Path
 
-from agents.llm import check_budget, estimate_cost, make_chat_model, resolve_api_key
+from agents.backends import extract_json
+from agents.llm import (
+    check_budget,
+    estimate_cost,
+    make_chat_model,
+    make_cli_backend,
+    resolve_agent,
+)
 from agents.state import GuardianState
 from core.config import get_settings
 from core.logging import get_logger
@@ -98,8 +110,47 @@ def build_fix_prompt(
 {retry_block}"""
 
 
+_CLI_SCHEMA_INSTRUCTION = """
+
+## Output format (strict)
+Respond with ONLY a JSON object (no markdown fences, no prose) with exactly these keys:
+{
+  "explanation": "what the vulnerability is and how the fix addresses it (2-4 sentences)",
+  "fixed_file_content": "the COMPLETE fixed file content",
+  "confidence": "high" | "medium" | "low",
+  "test_file_content": "complete pytest file (stdlib only)",
+  "test_file_path": "e.g. tests/test_security_fix.py",
+  "summary_for_pr": "one-line PR summary"
+}"""
+
+
+async def _generate_via_anthropic(state: GuardianState, prompt: str, credential: str):
+    """LangChain forced tool-use — guaranteed structured output."""
+    settings = get_settings()
+    model = make_chat_model(settings.fix_model, credential, temperature=0.2)
+    forced = model.bind_tools([FIX_TOOL], tool_choice={"type": "tool", "name": "submit_fix"})
+    resp = await forced.ainvoke(prompt)
+
+    tokens_in = resp.usage_metadata.get("input_tokens", 0) if resp.usage_metadata else 0
+    tokens_out = resp.usage_metadata.get("output_tokens", 0) if resp.usage_metadata else 0
+    cost = estimate_cost(settings.fix_model, tokens_in, tokens_out)
+
+    if not resp.tool_calls:
+        raise ValueError("model returned no tool call")
+    return resp.tool_calls[0]["args"], cost, tokens_in, tokens_out
+
+
+async def _generate_via_cli(state: GuardianState, prompt: str, conn):
+    """Installed coding agent (claude_code / codex) — schema in prompt, JSON out."""
+    backend = make_cli_backend(conn)
+    resp = await backend.complete(prompt + _CLI_SCHEMA_INSTRUCTION)
+    args = extract_json(resp.text)
+    # Subscription-billed: tokens recorded, but no dollar cost we can price
+    return args, 0.0, resp.tokens_in, resp.tokens_out
+
+
 async def generate_fix(state: GuardianState) -> tuple[FixResult, float, int, int]:
-    """One LLM call → FixResult + (cost, tokens_in, tokens_out)."""
+    """One agent call → FixResult + (cost, tokens_in, tokens_out)."""
     settings = get_settings()
     finding = state["current_finding"]
     workdir = Path(state["workdir"])
@@ -111,27 +162,20 @@ async def generate_fix(state: GuardianState) -> tuple[FixResult, float, int, int
 
     check_budget(state.get("llm_cost_usd", 0.0))
 
-    api_key = await resolve_api_key(state["installation_id"])
-    model = make_chat_model(settings.fix_model, api_key, temperature=0.2)
-    forced = model.bind_tools([FIX_TOOL], tool_choice={"type": "tool", "name": "submit_fix"})
-
+    conn = await resolve_agent(state["installation_id"])
     prompt = build_fix_prompt(
         finding,
         file_content,
         state.get("last_test_output"),
         state["fix"].fixed_file_content if state.get("fix") else None,
     )
-    resp = await forced.ainvoke(prompt)
 
-    tokens_in = resp.usage_metadata.get("input_tokens", 0) if resp.usage_metadata else 0
-    tokens_out = resp.usage_metadata.get("output_tokens", 0) if resp.usage_metadata else 0
-    cost = estimate_cost(settings.fix_model, tokens_in, tokens_out)
+    if conn.provider == "anthropic":
+        args, cost, tin, tout = await _generate_via_anthropic(state, prompt, conn.credential)
+    else:
+        args, cost, tin, tout = await _generate_via_cli(state, prompt, conn)
 
-    tool_calls = resp.tool_calls
-    if not tool_calls:
-        raise ValueError("model returned no tool call")
-    args = tool_calls[0]["args"]
-    return FixResult(**args), cost, tokens_in, tokens_out
+    return FixResult(**args), cost, tin, tout
 
 
 async def fix_generator_node(state: GuardianState) -> dict:

@@ -5,7 +5,13 @@ likely false positives. An LLM failure here never blocks the pipeline — we fal
 back to scanner severity alone.
 """
 
-from agents.llm import check_budget, estimate_cost, make_chat_model, resolve_api_key
+from agents.llm import (
+    check_budget,
+    estimate_cost,
+    make_chat_model,
+    make_cli_backend,
+    resolve_agent,
+)
 from agents.state import GuardianState
 from core.config import get_settings
 from core.logging import get_logger
@@ -47,15 +53,21 @@ async def filter_false_positives(
         f"Findings:\n{summaries}"
     )
 
-    api_key = await resolve_api_key(installation_id)
-    model = make_chat_model(settings.classify_model, api_key, temperature=0)
-    resp = await model.ainvoke(prompt)
+    conn = await resolve_agent(installation_id)
+    if conn.provider == "anthropic":
+        model = make_chat_model(settings.classify_model, conn.credential, temperature=0)
+        resp = await model.ainvoke(prompt)
+        tokens_in = resp.usage_metadata.get("input_tokens", 0) if resp.usage_metadata else 0
+        tokens_out = resp.usage_metadata.get("output_tokens", 0) if resp.usage_metadata else 0
+        cost = estimate_cost(settings.classify_model, tokens_in, tokens_out)
+        text = resp.content
+    else:
+        backend = make_cli_backend(conn)
+        resp = await backend.complete(prompt)
+        cost = 0.0  # subscription-billed
+        text = resp.text
 
-    tokens_in = resp.usage_metadata.get("input_tokens", 0) if resp.usage_metadata else 0
-    tokens_out = resp.usage_metadata.get("output_tokens", 0) if resp.usage_metadata else 0
-    cost = estimate_cost(settings.classify_model, tokens_in, tokens_out)
-
-    text = resp.content.strip().upper()
+    text = text.strip().upper()
     if "NONE" in text:
         return findings, cost
 

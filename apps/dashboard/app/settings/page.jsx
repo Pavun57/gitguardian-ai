@@ -3,9 +3,31 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 
+const AGENTS = {
+  anthropic: {
+    label: "Anthropic API key",
+    hint: "Pay-per-token. Get a key at console.anthropic.com.",
+    placeholder: "sk-ant-...",
+    secret: true,
+  },
+  claude_code: {
+    label: "Claude Code (subscription)",
+    hint: "Uses your Claude plan — no API key. Run `claude setup-token` in your terminal and paste the token.",
+    placeholder: "sk-ant-oat...",
+    secret: true,
+  },
+  codex: {
+    label: "Codex CLI (OpenAI)",
+    hint: "Paste an OpenAI API key, or the contents of ~/.codex/auth.json after `codex login`.",
+    placeholder: "sk-... or {...auth.json...}",
+    secret: true,
+  },
+};
+
 export default function SettingsPage() {
   const [installationId, setInstallationId] = useState("");
-  const [apiKey, setApiKey] = useState("");
+  const [provider, setProvider] = useState("claude_code");
+  const [credential, setCredential] = useState("");
   const [slackUrl, setSlackUrl] = useState("");
   const [keys, setKeys] = useState([]);
   const [flash, setFlash] = useState(null);
@@ -22,10 +44,16 @@ export default function SettingsPage() {
     try {
       const r = await api("/api/keys", {
         method: "POST",
-        body: JSON.stringify({ installation_id: parseInt(installationId), api_key: apiKey }),
+        body: JSON.stringify({
+          installation_id: parseInt(installationId),
+          provider,
+          credential,
+        }),
       });
-      setFlash(`Key stored (${r.fingerprint}). It is encrypted at rest and never displayed again.`);
-      setApiKey("");
+      setFlash(
+        `${AGENTS[r.provider].label} connected (${r.fingerprint}). Encrypted at rest, never displayed again.`
+      );
+      setCredential("");
       load();
     } catch (e) {
       setError(e.message);
@@ -47,6 +75,8 @@ export default function SettingsPage() {
     }
   };
 
+  const agent = AGENTS[provider];
+
   return (
     <>
       <h1>Settings</h1>
@@ -65,20 +95,34 @@ export default function SettingsPage() {
       </div>
 
       <div className="panel">
-        <h2>Connect your coding agent (BYOK)</h2>
+        <h2>Connect your coding agent</h2>
         <p className="muted" style={{ marginBottom: 10 }}>
-          Paste your Anthropic API key. Fixes are generated with <em>your</em> key —
-          encrypted at rest (Fernet), never shown again, scrubbed from logs.
+          Choose how fixes are generated. Installed agents (Claude Code, Codex) bill your
+          own subscription — no API key needed. Credentials are encrypted at rest.
         </p>
-        <label>Anthropic API key</label>
+
+        <div className="row" style={{ marginBottom: 12, gap: 8 }}>
+          {Object.entries(AGENTS).map(([key, a]) => (
+            <button
+              key={key}
+              className={provider === key ? "" : "secondary"}
+              onClick={() => setProvider(key)}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+
+        <p className="muted" style={{ marginBottom: 6 }}>{agent.hint}</p>
+        <label>Credential</label>
         <input
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder="sk-ant-..."
+          type={agent.secret ? "password" : "text"}
+          value={credential}
+          onChange={(e) => setCredential(e.target.value)}
+          placeholder={agent.placeholder}
         />
-        <button onClick={saveKey} disabled={!installationId || !apiKey}>
-          Store key
+        <button onClick={saveKey} disabled={!installationId || !credential}>
+          Connect agent
         </button>
 
         {keys.length > 0 && (
@@ -86,8 +130,8 @@ export default function SettingsPage() {
             <thead>
               <tr>
                 <th>Installation</th>
-                <th>Provider</th>
-                <th>Key</th>
+                <th>Agent</th>
+                <th>Credential</th>
                 <th></th>
               </tr>
             </thead>
@@ -95,7 +139,7 @@ export default function SettingsPage() {
               {keys.map((k) => (
                 <tr key={k.installation_id}>
                   <td className="mono">{k.installation_id}</td>
-                  <td>{k.provider}</td>
+                  <td>{AGENTS[k.provider]?.label ?? k.provider}</td>
                   <td className="mono">{k.fingerprint}</td>
                   <td>
                     <button
@@ -104,7 +148,7 @@ export default function SettingsPage() {
                         api(`/api/keys/${k.installation_id}`, { method: "DELETE" }).then(load)
                       }
                     >
-                      Remove
+                      Disconnect
                     </button>
                   </td>
                 </tr>

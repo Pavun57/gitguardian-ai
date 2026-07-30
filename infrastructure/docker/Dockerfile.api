@@ -8,8 +8,13 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl docker.io \
+    git curl docker.io nodejs npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Coding-agent CLIs for BYOA backends (claude_code / codex). Users authenticate
+# with their own subscriptions — no API keys on our side.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex \
+    && npm cache clean --force
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 

@@ -147,7 +147,15 @@ async def stats(_=Depends(_session)):
 
 class KeyIn(BaseModel):
     installation_id: int
-    api_key: str
+    provider: str = "anthropic"  # 'anthropic' | 'claude_code' | 'codex'
+    credential: str
+
+
+_CREDENTIAL_HINTS = {
+    "anthropic": ("sk-ant-", "sk-"),
+    "claude_code": ("sk-ant-oat",),  # OAuth tokens from `claude setup-token`
+    "codex": ("sk-", "{"),  # OpenAI key or ChatGPT auth.json
+}
 
 
 @router.get("/keys")
@@ -168,22 +176,37 @@ async def list_keys(_=Depends(_session)):
 
 @router.post("/keys", status_code=201)
 async def set_key(body: KeyIn, _=Depends(_session)):
-    if not body.api_key.startswith(("sk-ant-", "sk-")):
-        raise HTTPException(status_code=400, detail="not an Anthropic key format")
+    if body.provider not in _CREDENTIAL_HINTS:
+        valid = list(_CREDENTIAL_HINTS)
+        raise HTTPException(status_code=400, detail=f"provider must be one of {valid}")
+    if not body.credential.strip().startswith(_CREDENTIAL_HINTS[body.provider]):
+        raise HTTPException(
+            status_code=400, detail=f"credential doesn't look like a {body.provider} credential"
+        )
     async with get_session_factory()() as s:
         inst = await s.get(Installation, body.installation_id)
         if not inst:
             raise HTTPException(status_code=404, detail="installation not found")
+        # One agent connection per installation: replace any existing
+        existing = (
+            await s.scalars(select(ApiKey).where(ApiKey.installation_id == body.installation_id))
+        ).all()
+        for row in existing:
+            await s.delete(row)
         s.add(
             ApiKey(
                 installation_id=body.installation_id,
-                provider="anthropic",
-                ciphertext=encrypt_key(body.api_key),
-                key_fingerprint=fingerprint(body.api_key),
+                provider=body.provider,
+                ciphertext=encrypt_key(body.credential),
+                key_fingerprint=fingerprint(body.credential),
             )
         )
         await s.commit()
-    return {"status": "stored", "fingerprint": fingerprint(body.api_key)}
+    return {
+        "status": "stored",
+        "provider": body.provider,
+        "fingerprint": fingerprint(body.credential),
+    }
 
 
 @router.delete("/keys/{installation_id}", status_code=204)
