@@ -12,31 +12,7 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - ../../:/app
-      # Shadow the host's .venv (incompatible binaries) with the image's one
       - api-venv:/app/.venv
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-
-  worker:
-    build:
-      context: ../..
-      dockerfile: infrastructure/docker/Dockerfile.api
-    command: arq agents.worker.WorkerSettings
-    env_file: ../../.env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://gitguardian:gitguardian@postgres:5432/gitguardian
-      REDIS_URL: redis://redis:6379/0
-    volumes:
-      - ../../:/app
-      # Sibling-container access: scanners and test runs are spawned as sibling
-      # containers. The worker is trusted; the containers it spawns are hardened
-      # (no network, read-only FS, non-root, resource caps). See ADR-0002.
-      - /var/run/docker.sock:/var/run/docker.sock
-      - gitguardian-workspaces:/workspaces
-      - worker-venv:/app/.venv
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,6 +40,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gitguardian"]
       interval: 5s
@@ -77,19 +54,104 @@ services:
     volumes:
       - redis-data:/data
 
-  # Dev-only webhook tunnel: forwards GitHub webhook deliveries to the api service.
-  # Set SMEE_CHANNEL_URL in .env (https://smee.io -> new channel). Remove for prod.
-  smee:
-    image: node:22-alpine
-    command: sh -c "npm install -g smee-client && smee --url $$SMEE_CHANNEL_URL --target http://api:8000/webhooks/github"
-    env_file: ../../.env
-    profiles: ["tunnel"]
+  # --- Langfuse observability (self-hosted; traces stay on your machine) ---
+  # UI: http://localhost:3100 — keys auto-provisioned via LANGFUSE_INIT_* below,
+  # matching the defaults in .env.example so tracing works out of the box.
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    profiles: ["langfuse"]
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    profiles: ["langfuse"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - minio-data:/data
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    profiles: ["langfuse"]
+    ports:
+      - "3100:3000"
+    environment:
+      DATABASE_URL: postgresql://gitguardian:gitguardian@postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3100
+      NEXTAUTH_SECRET: gitguardian-dev-nextauth-secret
+      SALT: gitguardian-dev-salt
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+      REDIS_CONNECTION_STRING: redis://redis:6379/1
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_INIT_ORG_ID: gitguardian
+      LANGFUSE_INIT_ORG_NAME: GitGuardian
+      LANGFUSE_INIT_PROJECT_ID: gitguardian
+      LANGFUSE_INIT_PROJECT_NAME: gitguardian-ai
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: gg-lf-public-dev
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: gg-lf-secret-dev
+      LANGFUSE_INIT_USER_EMAIL: admin@gitguardian.local
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: admin1234
     depends_on:
-      - api
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      redis:
+        condition: service_started
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    profiles: ["langfuse"]
+    environment:
+      DATABASE_URL: postgresql://gitguardian:gitguardian@postgres:5432/langfuse
+      SALT: gitguardian-dev-salt
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+      REDIS_CONNECTION_STRING: redis://redis:6379/1
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      redis:
+        condition: service_started
 
 volumes:
   postgres-data:
   redis-data:
-  gitguardian-workspaces:
+  clickhouse-data:
+  minio-data:
   api-venv:
-  worker-venv:
+  gitguardian-workspaces:

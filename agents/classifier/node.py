@@ -45,12 +45,11 @@ def sort_by_severity(findings: list[Finding]) -> list[Finding]:
 
 
 async def filter_false_positives(
-    findings: list[Finding], installation_id: int, state_cost: float
+    findings: list[Finding], state_cost: float
 ) -> tuple[list[Finding], float]:
     """Ask the cheap model which findings are likely FPs (e.g. test fixtures,
     example keys). Returns (kept_findings, cost_usd)."""
     settings = get_settings()
-    check_budget(state_cost)
 
     summaries = [
         {
@@ -79,7 +78,8 @@ async def filter_false_positives(
         f"Findings:\n{summaries}"
     )
 
-    conn = await resolve_agent(installation_id)
+    conn = await resolve_agent()
+    check_budget(state_cost, metered=conn.is_metered)
     if conn.provider == "anthropic":
         model = make_chat_model(settings.classify_model, conn.credential, temperature=0)
         resp = await model.ainvoke(prompt)
@@ -128,7 +128,7 @@ async def classifier_node(state: GuardianState) -> dict:
     # Layer 2: LLM FP-filter (enhancement, never a blocker)
     if findings:
         try:
-            findings, added = await filter_false_positives(findings, state["installation_id"], cost)
+            findings, added = await filter_false_positives(findings, cost)
             cost += added
         except Exception as e:
             await log.awarning("FP filter skipped", error=str(e)[:300])

@@ -1,12 +1,13 @@
-"""SQLAlchemy models — minimal but extensible data model for Phase 1.
+"""SQLAlchemy models — local-first data model.
 
-JSONB `raw` columns hold tool-native output where the schema will evolve.
+Local repos are identified by path (no GitHub App installations). Agent
+connections and app config are global (single-user machine).
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -16,8 +17,8 @@ class Base(DeclarativeBase):
 
 
 class AppConfig(Base):
-    """Runtime configuration entered via the UI (GitHub App credentials etc.).
-    Values Fernet-encrypted. Env vars remain as fallback (see core/appconfig.py)."""
+    """Runtime configuration entered via the UI (agent creds, langfuse keys,
+    slack webhook). Values Fernet-encrypted."""
 
     __tablename__ = "app_config"
 
@@ -28,60 +29,29 @@ class AppConfig(Base):
     )
 
 
-class Installation(Base):
-    __tablename__ = "installations"
+class AgentConnection(Base):
+    """Which coding agent to use for fixes: 'claude_code' | 'codex' | 'anthropic'.
+    credential may be the CLI_MANAGED marker (the CLI authenticates itself)."""
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # GitHub installation id
-    account_login: Mapped[str] = mapped_column(Text)
-    slack_webhook_ciphertext: Mapped[bytes | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    uninstalled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    repositories: Mapped[list["Repository"]] = relationship(back_populates="installation")
-
-
-class Repository(Base):
-    __tablename__ = "repositories"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # GitHub repo id
-    installation_id: Mapped[int] = mapped_column(ForeignKey("installations.id"))
-    full_name: Mapped[str] = mapped_column(Text, index=True)
-    default_branch: Mapped[str] = mapped_column(Text, default="main")
-    is_active: Mapped[bool] = mapped_column(default=True)
-
-    installation: Mapped[Installation] = relationship(back_populates="repositories")
-
-
-class ApiKey(Base):
-    """Agent connections: a user's provider credential, Fernet-encrypted at rest.
-
-    installation_id NULL = global default (used when an installation has no
-    specific connection)."""
-
-    __tablename__ = "api_keys"
+    __tablename__ = "agent_connections"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    installation_id: Mapped[int | None] = mapped_column(
-        ForeignKey("installations.id"), index=True, nullable=True
-    )
-    provider: Mapped[str] = mapped_column(Text, default="anthropic")
+    provider: Mapped[str] = mapped_column(Text)
     ciphertext: Mapped[bytes] = mapped_column()
-    key_fingerprint: Mapped[str] = mapped_column(Text)  # "...wxyz" for display
+    key_fingerprint: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Scan(Base):
     __tablename__ = "scans"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    repository_id: Mapped[int] = mapped_column(ForeignKey("repositories.id"), index=True)
-    commit_sha: Mapped[str] = mapped_column(Text)
-    ref: Mapped[str] = mapped_column(Text)
+    repo_path: Mapped[str] = mapped_column(Text, index=True)  # local repo root
+    branch: Mapped[str] = mapped_column(Text, default="")
+    trigger: Mapped[str] = mapped_column(Text, default="commit")  # 'commit' | 'manual'
     status: Mapped[str] = mapped_column(Text, default="queued", index=True)
-    trigger: Mapped[str] = mapped_column(Text, default="push")
     llm_cost_usd: Mapped[float] = mapped_column(Numeric(10, 6), default=0)
-    langsmith_trace_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trace_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # Langfuse trace
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -99,7 +69,7 @@ class FindingRow(Base):
     severity: Mapped[str] = mapped_column(Text, index=True)
     file_path: Mapped[str] = mapped_column(Text)
     start_line: Mapped[int] = mapped_column(Integer)
-    fingerprint: Mapped[str] = mapped_column(Text, index=True)  # dedup key
+    fingerprint: Mapped[str] = mapped_column(Text, index=True)
     raw: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     scan: Mapped[Scan] = relationship(back_populates="findings")
@@ -112,7 +82,7 @@ class FixRow(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     finding_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("findings.id"), unique=True)
     status: Mapped[str] = mapped_column(Text, default="generated")
-    model: Mapped[str] = mapped_column(Text)
+    model: Mapped[str] = mapped_column(Text, default="")
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     original_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     fixed_content: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -131,9 +101,9 @@ class PullRequestRow(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     fix_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("fixes.id"), unique=True)
-    repo_full_name: Mapped[str] = mapped_column(Text)
-    number: Mapped[int] = mapped_column(Integer)
-    url: Mapped[str] = mapped_column(Text)
+    repo_path: Mapped[str] = mapped_column(Text)
+    number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    url: Mapped[str] = mapped_column(Text, default="")
     branch: Mapped[str] = mapped_column(Text, index=True)
     state: Mapped[str] = mapped_column(Text, default="open")
 

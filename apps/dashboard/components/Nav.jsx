@@ -23,7 +23,7 @@ export default function Nav() {
       <a href="/approvals">Approvals</a>
       <a href="/repos">Repos</a>
       <a href="/settings">Settings</a>
-      <a href="/setup">Setup</a>
+      <a href="http://localhost:3100" target="_blank">Traces ↗</a>
       <span className="spacer" />
       {user && (
         <span className="muted">

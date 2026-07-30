@@ -1,16 +1,21 @@
-# GitGuardian AI — Agentic Security on Every Push
+# GitGuardian AI — Your Agentic Security Guard at Commit Time
 
-An agentic security system: on every `git push`, it scans for secrets and
-vulnerabilities, generates an AI fix **with your own coding agent** (Claude Code
-or Codex — no API key needed), proves it with generated tests in an isolated
-container, and opens a pull request for human review.
+**Stop secrets and vulnerabilities before they ever leave your machine.**
+GitGuardian runs locally: when you commit, it scans, fixes with *your own*
+coding agent (Claude Code / Codex — no API key), proves the fix with tests in
+an isolated container, and opens a PR via `gh`. Your code and credentials
+never touch a third-party server.
 
 ```
-git push → webhook → Semgrep+Gitleaks → classify → your coding agent fixes →
-pytest in hardened Docker → branch + PR → check-run → you review & merge
+gitguardian commit -m "msg"
+  → fast staged-diff secret check
+  → Semgrep + Gitleaks (hardened containers)
+  → classify (fixture-path rules + keep-when-in-doubt LLM filter)
+  → your coding agent generates fix + pytest suite
+  → tests run in network-less Docker sandbox
+  → fix lands on gitguardian/fix-* branch → push → gh pr create
+  → your commit proceeds, traced in Langfuse
 ```
-
-**The human is always in the loop** — nothing merges without your approval.
 
 ## One-line install
 
@@ -18,90 +23,102 @@ pytest in hardened Docker → branch + PR → check-run → you review & merge
 curl -fsSL https://raw.githubusercontent.com/Pavun57/gitguardian-ai/main/install.sh | bash
 ```
 
-The installer checks prerequisites (docker, node 20+, git), clones the repo,
-generates secrets, starts Postgres + Redis, installs dependencies, and runs
-migrations. When it finishes:
+Then:
 
 ```bash
-# 4 terminals from ~/gitguardian-ai:
-uv run uvicorn apps.api.main:app --reload --port 8000    # API
-uv run arq agents.worker.WorkerSettings                  # agent pipeline
-cd apps/dashboard && npm run dev                         # dashboard (localhost:3000)
-docker run --rm -it --network host node:22-alpine \
-  sh -c "npm install -g smee-client && smee --url https://smee.io/YOUR_CHANNEL --target http://localhost:8000/webhooks/github"
+gitguardian start     # dashboard, API, Postgres, Redis, Langfuse
 ```
 
-Then open **http://localhost:3000/setup** — the wizard:
+Open **http://localhost:3000/settings** → connect your coding agent
+(auto-detected — Claude Code or Codex, one click, tested).
 
-1. **Creates the GitHub App in one click** (manifest flow: permissions, events,
-   webhook URL all pre-filled)
-2. Lets you paste the App ID + private key — stored **encrypted** in the DB,
-   no `.env` editing
-3. **Connect GitHub** → install on your repos (they register automatically)
-4. **Connect your coding agent** — auto-detects Claude Code / Codex on your
-   machine, tests the connection, done. Fixes bill *your* subscription.
+## Daily use
+
+```bash
+cd your-repo
+git add .
+gitguardian commit -m "add payment endpoint"
+```
+
+- **Clean?** Your commit proceeds immediately.
+- **Findings?** The agent fixes them, tests the fixes, and opens fix PRs —
+  then your commit proceeds. Unfixable criticals **block** the commit
+  (`--force` to override).
+- **Just checking?** `gitguardian scan` runs the pipeline without committing.
+
+## The dashboard (localhost:3000)
+
+| Page | What you see |
+|---|---|
+| Overview | scans, findings, fixes, open PRs, total agent cost |
+| Scans | every scan with findings, fix explanations, Langfuse trace links |
+| Approvals | HITL queue — approve (merge via `gh`) / reject (close) fix PRs |
+| Repos | local repos the pipeline has seen |
+| Settings | connect your coding agent, Langfuse keys, Slack |
+| Traces ↗ | Langfuse UI (localhost:3100) — every LLM call, tokens, costs |
+
+## Observability — Langfuse (self-hosted)
+
+Every `gitguardian commit` produces a trace: pipeline spans, each LLM
+generation (model, tokens, USD cost), per-scan totals. Self-hosted via the
+`langfuse` compose profile — traces **stay on your machine** (that's why
+Langfuse, not LangSmith). Start with `gitguardian start`, open
+http://localhost:3100 (auto-provisioned project `gitguardian-ai`), add the
+keys in Settings.
+
+## Commands
+
+```bash
+gitguardian commit -m "msg"   # the core flow
+gitguardian scan              # scan + fix without committing
+gitguardian start|stop|restart|status|logs
+gitguardian uninstall         # remove everything cleanly
+```
 
 ## How it works
 
 | Stage | What happens |
 |---|---|
-| **Webhook** | HMAC-SHA256 verified, deduped, ACKs <200ms, job queued (arq/Redis) |
-| **Scan** | Semgrep (custom rules) + Gitleaks in hardened sibling containers → normalized findings |
-| **Classify** | Fixture paths dropped by rule; LLM FP-filter (keep-when-in-doubt); top 3 by severity |
-| **Fix** | Your coding agent produces a full-file rewrite + pytest suite (validated: syntax, single-file diff, re-scan) |
-| **Test** | Generated tests run in a container with **no network**, read-only FS, non-root, resource caps — ≤2 retries with failure context |
-| **PR** | Deterministic branch `gitguardian/fix-<rule>-<sha>`, PR with finding table, explanation, test evidence, cost |
-| **Review** | Check-run annotations inline; approve/reject from the dashboard or GitHub |
+| **Scan** | Semgrep (custom rules) + Gitleaks in hardened sibling containers (no network, read-only, non-root) |
+| **Classify** | fixture paths dropped by rule; LLM FP-filter (keep-when-in-doubt); top 3 by severity |
+| **Fix** | your agent produces a full-file rewrite + pytest suite; validated by syntax check, single-file diff, and re-scan |
+| **Test** | generated tests in an isolated container (no net, read-only FS, caps) — ≤2 retries with failure context |
+| **PR** | deterministic `gitguardian/fix-*` branch, pushed with your git auth, PR opened via `gh` |
+| **Review** | dashboard approval queue or GitHub — a human always merges |
 
-**Guardrails:** max 3 findings/push · max 2 fix attempts · $0.50/scan budget ·
-low-confidence fixes never open PRs · the app never scans its own fix branches.
-
-## Cost tracking
-
-Claude Code reports its real per-call cost (`total_cost_usd`); API-key backends
-are priced from token counts. Every scan, fix, and the dashboard totals show
-actual spend.
-
-## Dashboard
-
-- **Overview** — scans, findings, fixes, open PRs, total LLM spend
-- **Scans** — full history with per-finding detail, fix explanations, PR links
-- **Approvals** — the HITL queue: approve (merge) / reject (close) fix PRs
-- **Repos** — connected repositories (auto-synced with GitHub)
-- **Settings** — connect GitHub, connect your coding agent, Slack webhooks
-- **Setup** — GitHub App creation wizard
+**Guardrails:** max 3 findings/commit · max 2 fix attempts · $0.50/scan budget ·
+low-confidence fixes never ship · unfixable criticals block the commit.
 
 ## Development
 
 ```bash
 git clone https://github.com/Pavun57/gitguardian-ai.git && cd gitguardian-ai
-
-uv sync                                        # Python deps
+uv sync
 docker compose -f infrastructure/docker/docker-compose.yml up -d postgres redis
-uv run alembic upgrade head                    # migrations
-(cd apps/dashboard && npm install)             # dashboard deps
+uv run alembic upgrade head
+(cd apps/dashboard && npm install && npm run dev)
 
-# run: api / worker / dashboard / smee tunnel (see above)
-
-uv run pytest -m "not docker and not e2e"      # fast suite
-uv run pytest -m docker                        # real scanner containers
-uv run python -m evals.metrics.run_eval        # detection eval (100%/0 FPs gate)
-uv run ruff check && uv run ruff format        # lint
+uv run pytest -m "not docker"      # unit + graph topology
+uv run pytest -m docker            # real scanner containers
+uv run python -m evals.metrics.run_eval   # detection eval: 100% / 0 FPs
+uv run ruff check
 ```
 
 ## Architecture
 
-- `apps/api` — FastAPI webhook receiver + dashboard REST API
+- `agents/` — LangGraph pipeline (local) + pluggable agent backends
+  (Claude Code, Codex, Anthropic API) + `cli.py` (the `gg` entry point)
+- `apps/api` — FastAPI dashboard REST API
 - `apps/dashboard` — Next.js dashboard
-- `agents/` — LangGraph pipeline (router → scanner → classifier → fix → test → PR → notify) + pluggable agent backends (Claude Code, Codex, Anthropic API)
-- `security/` — scanner runners (hardened containers), SARIF/gitleaks parsers, custom Semgrep rules, pre-commit hook
-- `core/` — config, DB models, crypto (Fernet), runtime app-config
+- `security/` — scanner runners, SARIF/gitleaks parsers, custom rules, pre-commit scanner
+- `core/` — config, DB, crypto (Fernet), Langfuse tracing
 - `evals/` — vulnerable-sample dataset + detection metrics
-- `docs/architecture/` — pipeline doc, ADRs ([full-file rewrite](docs/architecture/ADR-0001-full-file-rewrite.md), [sibling containers](docs/architecture/ADR-0002-sibling-containers.md)), [deployment](docs/architecture/deployment.md)
+- `docs/` — [project guide](docs/PROJECT_GUIDE.md), [interview Q&A](docs/INTERVIEW_QA.md), ADRs
 
 ## Safety model
 
-- Webhook HMAC-SHA256 verification + delivery dedup
+- Everything runs on your machine — code never leaves except your normal
+  `git push` and the fix PR you review
 - LLM-generated code executes only in network-less, read-only, non-root containers
-- Credentials (GitHub key, agent tokens, Slack webhooks) Fernet-encrypted at rest
-- Secrets scrubbed from logs; gitleaks output redacted before it can reach the DB or a prompt
+- Credentials (agent tokens, Langfuse keys, Slack) Fernet-encrypted at rest
+- Secrets redacted at the parser before they can reach the DB or an LLM prompt

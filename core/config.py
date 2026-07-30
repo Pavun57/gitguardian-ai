@@ -5,9 +5,13 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# .env lives at the install root (two levels up from core/config.py), so the
+# CLI finds it even when invoked from the user's repo via `gitguardian commit`.
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
     # GitHub App
     github_app_id: str = ""

@@ -22,9 +22,9 @@ dependencies = [
     "asyncpg~=0.30",
     "alembic~=1.15",
     "redis~=5.2",
-    "arq~=0.26",
     "docker~=7.1",
     "structlog~=25.2",
+    "langfuse>=4.14.2",
 ]
 
 [dependency-groups]
@@ -36,6 +36,9 @@ dev = [
     "ruff~=0.11",
     "mypy~=1.15",
 ]
+
+[project.scripts]
+gg = "agents.cli:main"
 
 [build-system]
 requires = ["hatchling"]

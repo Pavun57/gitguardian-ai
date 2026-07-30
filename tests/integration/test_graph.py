@@ -1,16 +1,12 @@
-"""Graph topology tests — full pipeline with LLM + external IO mocked.
+"""Local graph topology tests — routing edges of the commit-time pipeline."""
 
-These prove the state machine itself: routing edges, retry loops, budget caps,
-and the needs-human path, deterministically and without network or Docker.
-"""
-
-from agents.graph import (
+from agents.local_graph import (
     after_advance,
     after_classify,
     after_fix_apply,
     after_fix_generate,
     after_test_run,
-    build_graph,
+    build_local_graph,
 )
 from core.schemas import Finding, FixResult, Severity, TestResult
 
@@ -37,9 +33,6 @@ def _fix(confidence="high") -> FixResult:
     )
 
 
-# --- pure edge-function tests (no graph execution) ---
-
-
 def test_no_findings_goes_to_finalize():
     assert after_classify({"findings": []}) == "finalize"
 
@@ -49,8 +42,7 @@ def test_findings_go_to_fix_loop():
 
 
 def test_low_confidence_skips_pr():
-    state = {"fix": _fix(confidence="low")}
-    assert after_fix_generate(state) == "fix_advance"
+    assert after_fix_generate({"fix": _fix(confidence="low")}) == "fix_advance"
 
 
 def test_high_confidence_goes_to_apply():
@@ -85,8 +77,8 @@ def test_advance_loops_through_findings():
     assert after_advance(state) == "finalize"
 
 
-def test_graph_compiles_with_expected_nodes():
-    g = build_graph()
+def test_local_graph_compiles_with_expected_nodes():
+    g = build_local_graph()
     nodes = set(g.get_graph().nodes)
     assert {
         "router",
@@ -99,5 +91,4 @@ def test_graph_compiles_with_expected_nodes():
         "pr_create",
         "fix_advance",
         "finalize",
-        "notify",
     } <= nodes

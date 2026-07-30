@@ -17,24 +17,37 @@ export default function ScansPage() {
         <thead>
           <tr>
             <th>Repo</th>
-            <th>Ref</th>
-            <th>Commit</th>
+            <th>Branch</th>
             <th>Status</th>
             <th>Cost</th>
+            <th>Trace</th>
             <th>When</th>
           </tr>
         </thead>
         <tbody>
           {scans.map((s) => (
             <tr key={s.id}>
-              <td><a href={`/scans/${s.id}`}>{s.repo}</a></td>
-              <td className="muted">{s.ref?.replace("refs/heads/", "")}</td>
-              <td className="mono">{s.commit_sha}</td>
+              <td><a href={`/scans/${s.id}`}>{s.repo.split("/").pop()}</a></td>
+              <td className="muted">{s.branch}</td>
               <td><span className={`badge ${s.status}`}>{s.status}</span></td>
               <td>${s.cost_usd.toFixed(4)}</td>
+              <td>
+                {s.trace_url ? (
+                  <a href={s.trace_url} target="_blank" rel="noreferrer">view →</a>
+                ) : (
+                  <span className="muted">–</span>
+                )}
+              </td>
               <td className="muted">{s.created_at?.slice(0, 16).replace("T", " ")}</td>
             </tr>
           ))}
+          {scans.length === 0 && (
+            <tr>
+              <td colSpan="6" className="muted">
+                No scans yet — run <code>gitguardian commit -m "..."</code> in a repo.
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </>

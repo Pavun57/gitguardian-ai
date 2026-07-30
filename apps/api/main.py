@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from apps.api.routers import agents, auth, dashboard, health, tunnel, webhooks
+from apps.api.routers import agents, auth, dashboard, health
 from core.config import get_settings
 from core.logging import configure_logging
 
@@ -28,8 +28,6 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
-app.include_router(webhooks.router)
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(agents.router)
-app.include_router(tunnel.router)

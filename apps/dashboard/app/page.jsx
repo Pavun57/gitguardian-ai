@@ -43,7 +43,7 @@ export default function OverviewPage() {
         <thead>
           <tr>
             <th>Repo</th>
-            <th>Commit</th>
+            <th>Branch</th>
             <th>Status</th>
             <th>Cost</th>
             <th>When</th>
@@ -53,7 +53,7 @@ export default function OverviewPage() {
           {scans.map((s) => (
             <tr key={s.id}>
               <td><a href={`/scans/${s.id}`}>{s.repo}</a></td>
-              <td className="mono">{s.commit_sha}</td>
+              <td className="muted">{s.branch}</td>
               <td><span className={`badge ${s.status}`}>{s.status}</span></td>
               <td>${s.cost_usd.toFixed(4)}</td>
               <td className="muted">{s.created_at?.slice(0, 16).replace("T", " ")}</td>

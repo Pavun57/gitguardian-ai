@@ -175,9 +175,8 @@ async def generate_fix(state: GuardianState) -> tuple[FixResult, float, int, int
     if len(file_content.splitlines()) > settings.max_file_lines:
         raise ValueError(f"file too large ({len(file_content.splitlines())} lines)")
 
-    check_budget(state.get("llm_cost_usd", 0.0))
-
-    conn = await resolve_agent(state["installation_id"])
+    conn = await resolve_agent()
+    check_budget(state.get("llm_cost_usd", 0.0), metered=conn.is_metered)
     prompt = build_fix_prompt(
         finding,
         file_content,
@@ -194,7 +193,41 @@ async def generate_fix(state: GuardianState) -> tuple[FixResult, float, int, int
 
 
 async def fix_generator_node(state: GuardianState) -> dict:
-    fix, cost, tin, tout = await generate_fix(state)
+    from agents.llm import BudgetExceeded
+
+    try:
+        fix, cost, tin, tout = await generate_fix(state)
+    except BudgetExceeded as e:
+        # Contain per-finding: skip to the next one instead of crashing the run
+        await log.awarning("budget exceeded — skipping remaining fixes", error=str(e))
+        return {
+            "fix": None,
+            "error": str(e),
+            "events": [f"fix_generator: budget exceeded, skipping ({e})"],
+        }
+    except Exception as e:
+        # Agent hiccup on one finding shouldn't sink the whole scan
+        await log.aerror("fix generation failed", error=str(e)[:300])
+        return {
+            "fix": None,
+            "error": str(e)[:500],
+            "events": [f"fix_generator: failed ({str(e)[:120]})"],
+        }
+    from core.tracing import current_tracer
+
+    tracer = current_tracer()
+    if tracer:
+        tracer.generation(
+            name=f"fix:{state['current_finding'].rule_id}",
+            model=get_settings().fix_model,
+            input={
+                "finding": state["current_finding"].rule_id,
+                "file": state["current_finding"].file_path,
+            },
+            output={"confidence": fix.confidence, "summary": fix.summary_for_pr},
+            usage={"input": tin, "output": tout},
+            cost=cost,
+        )
     await log.ainfo(
         "fix generated",
         rule=state["current_finding"].rule_id,

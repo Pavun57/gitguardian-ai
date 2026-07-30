@@ -1,4 +1,4 @@
-"""LangGraph state schema — one graph invocation handles one push."""
+"""LangGraph state schema — local-first: one invocation handles one commit."""
 
 from typing import Annotated, TypedDict
 
@@ -11,27 +11,26 @@ def _append(a: list, b: list) -> list:
 
 class GuardianState(TypedDict, total=False):
     scan_id: str  # UUID; also the LangGraph thread_id
-    installation_id: int
-    repo_full_name: str
-    commit_sha: str
-    ref: str
-    workdir: str  # temp clone path on the worker
+    repo_path: str  # local repo root
+    workdir: str  # directory the scanner/fix/test nodes operate on (== repo_path locally)
+    branch: str  # current branch
+    commit_message: str  # user's -m message
 
-    findings: list[Finding]  # normalized, post-classify, severity-sorted
-    findings_index: int  # which finding the fix loop is on
+    findings: list[Finding]
+    findings_index: int
     current_finding: Finding | None
 
     fix_attempts: int
-    last_test_output: str | None  # fed back into the fix prompt on retry
+    last_test_output: str | None
     fix: FixResult | None
     test_result: TestResult | None
+    fixed_files: Annotated[list[str], _append]  # files changed by applied fixes
     prs: Annotated[list[PullRequestRef], _append]
 
-    check_run_id: int | None
     error: str | None
     llm_cost_usd: float
     llm_input_tokens: int
     llm_output_tokens: int
+    trace_url: str | None
 
-    # audit trail of node transitions (appended, never overwritten)
     events: Annotated[list[str], _append]

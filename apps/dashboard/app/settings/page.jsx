@@ -15,82 +15,25 @@ const AGENTS = {
 };
 
 export default function SettingsPage() {
-  const [installations, setInstallations] = useState([]);
-  const [installationId, setInstallationId] = useState("");
   const [detect, setDetect] = useState(null);
-  const [keys, setKeys] = useState([]);
-  const [slackUrl, setSlackUrl] = useState("");
-  const [smeeUrl, setSmeeUrl] = useState("");
-  const [tunnel, setTunnel] = useState(null);
+  const [connection, setConnection] = useState(null);
   const [testing, setTesting] = useState(null);
   const [testResult, setTestResult] = useState({});
+  const [config, setConfig] = useState({});
+  const [langfuse, setLangfuse] = useState({ host: "http://localhost:3100", public_key: "", secret_key: "" });
+  const [slackUrl, setSlackUrl] = useState("");
   const [flash, setFlash] = useState(null);
   const [error, setError] = useState(null);
 
-  const loadKeys = () => api("/api/keys").then(setKeys).catch(() => {});
-  const loadInstallations = () =>
-    api("/api/installations").then((rows) => {
-      setInstallations(rows);
-      if (rows.length && !installationId) setInstallationId(String(rows[0].id));
-    }).catch(() => {});
+  const loadConnection = () => api("/api/agents/connection").then(setConnection).catch(() => {});
   const loadDetect = () => api("/api/agents/detect").then(setDetect).catch(() => {});
-  const loadTunnel = () =>
-    api("/api/tunnel").then((t) => {
-      setTunnel(t);
-      if (t.channel_url && !smeeUrl) setSmeeUrl(t.channel_url);
-    }).catch(() => {});
-
-  const startTunnel = async () => {
-    setFlash(null);
-    setError(null);
-    try {
-      await api("/api/tunnel", {
-        method: "POST",
-        body: JSON.stringify({ channel_url: smeeUrl }),
-      });
-      setFlash("Tunnel started — GitHub webhooks now reach this machine.");
-      loadTunnel();
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-
-  const stopTunnel = async () => {
-    await api("/api/tunnel", { method: "DELETE" }).catch(() => {});
-    loadTunnel();
-  };
-  // Resilience: pull installations straight from the GitHub API — doesn't
-  // depend on the installation webhook having been delivered.
-  const syncGitHub = () => api("/api/github/sync", { method: "POST" }).then(loadInstallations).catch(() => {});
+  const loadConfig = () => api("/api/config").then(setConfig).catch(() => {});
 
   useEffect(() => {
-    syncGitHub();
-    loadKeys();
+    loadConnection();
     loadDetect();
-    loadTunnel();
-    // After "Connect GitHub" opens a new tab and the user installs the app,
-    // coming back to this tab refreshes the installations list automatically.
-    const onFocus = () => {
-      syncGitHub();
-      loadDetect();
-    };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    loadConfig();
   }, []);
-
-  // While nothing is connected, keep polling so the page updates itself
-  // the moment the installation lands (webhook or sync).
-  useEffect(() => {
-    if (installations.length > 0) return;
-    const timer = setInterval(loadInstallations, 5000);
-    return () => clearInterval(timer);
-  }, [installations.length]);
-
-  const connectGitHub = async () => {
-    const { url } = await api("/api/github/connect-url");
-    window.open(url, "_blank");
-    setTimeout(syncGitHub, 5000);
-  };
 
   const connectAgent = async (provider) => {
     setFlash(null);
@@ -98,13 +41,10 @@ export default function SettingsPage() {
     try {
       const r = await api("/api/agents/connect", {
         method: "POST",
-        body: JSON.stringify({
-          installation_id: installationId ? parseInt(installationId) : null,
-          provider,
-        }),
+        body: JSON.stringify({ provider }),
       });
       setFlash(`${AGENTS[provider].label} connected (${r.mode}) — no keys to paste.`);
-      loadKeys();
+      loadConnection();
     } catch (e) {
       setError(e.message);
     }
@@ -116,10 +56,7 @@ export default function SettingsPage() {
     try {
       const r = await api("/api/agents/test-connection", {
         method: "POST",
-        body: JSON.stringify({
-          installation_id: installationId ? parseInt(installationId) : null,
-          provider,
-        }),
+        body: JSON.stringify({ provider }),
       });
       setTestResult((prev) => ({ ...prev, [provider]: r }));
     } catch (e) {
@@ -128,16 +65,13 @@ export default function SettingsPage() {
     setTesting(null);
   };
 
-  const saveSlack = async () => {
+  const saveConfig = async (key, value, message) => {
     setFlash(null);
     setError(null);
     try {
-      await api("/api/slack", {
-        method: "POST",
-        body: JSON.stringify({ installation_id: parseInt(installationId), webhook_url: slackUrl }),
-      });
-      setFlash("Slack webhook stored.");
-      setSlackUrl("");
+      await api("/api/config", { method: "POST", body: JSON.stringify({ key, value }) });
+      setFlash(message);
+      loadConfig();
     } catch (e) {
       setError(e.message);
     }
@@ -150,53 +84,23 @@ export default function SettingsPage() {
       {error && <div className="flash error">{error}</div>}
 
       <div className="panel">
-        <h2>GitHub</h2>
-        {installations.length === 0 ? (
-          <>
-            <p className="muted" style={{ marginBottom: 12 }}>
-              Connect GitHub to start scanning. You'll be sent to GitHub to authorize
-              the app and choose repositories — no IDs to copy.
-            </p>
-            <button onClick={connectGitHub}>Connect GitHub →</button>
-          </>
-        ) : (
-          <>
-            <p className="muted" style={{ marginBottom: 10 }}>
-              Connected installation (registered automatically via webhook):
-            </p>
-            <div className="row">
-              <select
-                value={installationId}
-                onChange={(e) => setInstallationId(e.target.value)}
-                style={{
-                  background: "var(--bg)",
-                  color: "var(--text)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  padding: "8px 12px",
-                  fontFamily: "inherit",
-                }}
-              >
-                {installations.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.account} (#{i.id})
-                  </option>
-                ))}
-              </select>
-              <button className="secondary" onClick={connectGitHub}>
-                + Add another
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-
-      <div className="panel">
-        <h2>Connect your coding agent</h2>
+        <h2>Your coding agent</h2>
         <p className="muted" style={{ marginBottom: 14 }}>
           Fixes are generated by your installed agent, billed to your own subscription.
-          We auto-detect local CLIs and credentials — nothing to paste.
+          We auto-detect local CLIs — nothing to paste.
         </p>
+        {connection?.connected && (
+          <p style={{ marginBottom: 12 }}>
+            Connected: <strong>{AGENTS[connection.provider]?.label ?? connection.provider}</strong>{" "}
+            <span className="mono muted">({connection.fingerprint})</span>{" "}
+            <button
+              className="danger"
+              onClick={() => api("/api/agents/connect", { method: "DELETE" }).then(loadConnection)}
+            >
+              Disconnect
+            </button>
+          </p>
+        )}
 
         {Object.entries(AGENTS).map(([provider, a]) => {
           const d = detect?.[provider];
@@ -210,12 +114,6 @@ export default function SettingsPage() {
                 </span>
               </div>
               <p className="muted" style={{ margin: "8px 0" }}>{a.hint}</p>
-              {d && !d.connectable && (
-                <p className="muted" style={{ marginBottom: 8 }}>
-                  {!d.cli_installed && "CLI not on PATH. "}
-                  {d.cli_installed && !d.credentials_found && "Not logged in. "}
-                </p>
-              )}
               <div className="row">
                 <button
                   className="secondary"
@@ -224,103 +122,61 @@ export default function SettingsPage() {
                 >
                   {testing === provider ? "Testing…" : "Test connection"}
                 </button>
-                <button
-                  disabled={!d?.connectable}
-                  onClick={() => connectAgent(provider)}
-                >
+                <button disabled={!d?.connectable} onClick={() => connectAgent(provider)}>
                   Connect
                 </button>
               </div>
               {t && (
                 <p style={{ marginTop: 8 }} className={t.ok ? "" : "flash error"}>
-                  {t.ok
-                    ? `✓ Working — responded in ${t.latency_seconds}s`
-                    : `✗ ${t.error}`}
+                  {t.ok ? `✓ Working — responded in ${t.latency_seconds}s` : `✗ ${t.error}`}
                 </p>
               )}
             </div>
           );
         })}
+      </div>
 
-        {keys.length > 0 && (
-          <table style={{ marginTop: 8 }}>
-            <thead>
-              <tr>
-                <th>Installation</th>
-                <th>Agent</th>
-                <th>Credential</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {keys.map((k) => (
-                <tr key={k.installation_id ?? "global"}>
-                  <td className="mono">{k.installation_id ?? "global"}</td>
-                  <td>{AGENTS[k.provider]?.label ?? k.provider}</td>
-                  <td className="mono">{k.fingerprint}</td>
-                  <td>
-                    <button
-                      className="danger"
-                      onClick={() =>
-                        api(`/api/keys/${k.installation_id ?? "global"}`, { method: "DELETE" }).then(loadKeys)
-                      }
-                    >
-                      Disconnect
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <div className="panel">
+        <h2>Observability (Langfuse)</h2>
+        <p className="muted" style={{ marginBottom: 10 }}>
+          Self-hosted Langfuse traces every scan — model calls, tokens, costs. Start it with{" "}
+          <code>docker compose --profile langfuse up -d</code> then create keys at{" "}
+          <a href="http://localhost:3100" target="_blank" rel="noreferrer">localhost:3100</a>.
+          Status: {config.langfuse_secret_key ? "✅ configured" : "❌ not configured"}
+        </p>
+        <label>Host</label>
+        <input type="text" value={langfuse.host} onChange={(e) => setLangfuse((l) => ({ ...l, host: e.target.value }))} />
+        <label>Public key</label>
+        <input type="text" value={langfuse.public_key} onChange={(e) => setLangfuse((l) => ({ ...l, public_key: e.target.value }))} placeholder="pk-lf-..." />
+        <label>Secret key</label>
+        <input type="password" value={langfuse.secret_key} onChange={(e) => setLangfuse((l) => ({ ...l, secret_key: e.target.value }))} placeholder="sk-lf-..." />
+        <button
+          onClick={async () => {
+            await saveConfig("langfuse_host", langfuse.host, "Langfuse host saved");
+            await saveConfig("langfuse_public_key", langfuse.public_key, "Langfuse keys saved");
+            await saveConfig("langfuse_secret_key", langfuse.secret_key, "Langfuse configured — traces will appear on the next scan");
+          }}
+          disabled={!langfuse.public_key || !langfuse.secret_key}
+        >
+          Save Langfuse config
+        </button>
       </div>
 
       <div className="panel">
         <h2>Slack notifications</h2>
-        <label>Incoming webhook URL</label>
+        <label>Incoming webhook URL {config.slack_webhook_url && "(✅ set)"}</label>
         <input
           type="text"
           value={slackUrl}
           onChange={(e) => setSlackUrl(e.target.value)}
           placeholder="https://hooks.slack.com/services/..."
         />
-        <button onClick={saveSlack} disabled={!installationId || !slackUrl}>
+        <button
+          onClick={() => saveConfig("slack_webhook_url", slackUrl, "Slack webhook stored")}
+          disabled={!slackUrl}
+        >
           Save webhook
         </button>
-      </div>
-
-      <div className="panel">
-        <h2>Webhook tunnel (dev)</h2>
-        <p className="muted" style={{ marginBottom: 10 }}>
-          GitHub needs a public URL to reach this machine. Create a free channel at{" "}
-          <a href="https://smee.io" target="_blank" rel="noreferrer">smee.io</a>, paste it here —
-          we run the tunnel for you.{" "}
-          {tunnel && (
-            <span className={`badge ${tunnel.running ? "success" : "failed"}`}>
-              {tunnel.running ? "running" : "stopped"}
-            </span>
-          )}
-        </p>
-        <label>smee.io channel URL</label>
-        <input
-          type="text"
-          value={smeeUrl}
-          onChange={(e) => setSmeeUrl(e.target.value)}
-          placeholder="https://smee.io/xxxxxxxx"
-        />
-        <div className="row">
-          <button onClick={startTunnel} disabled={!smeeUrl}>
-            {tunnel?.running ? "Restart tunnel" : "Start tunnel"}
-          </button>
-          {tunnel?.running && (
-            <button className="secondary" onClick={stopTunnel}>
-              Stop
-            </button>
-          )}
-        </div>
-        <p className="muted" style={{ marginTop: 8 }}>
-          Set this same URL as the Webhook URL in your GitHub App settings.
-        </p>
       </div>
     </>
   );

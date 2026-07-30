@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 #
-# gitguardian — service manager for GitGuardian AI
+# gitguardian — commit-time security agent + service manager
 #
-#   gitguardian start       start all services (db, api, worker, dashboard, tunnel)
-#   gitguardian stop        stop all services
-#   gitguardian restart     restart app services (keeps db running)
-#   gitguardian status      show what is running + URLs
-#   gitguardian logs <svc>  tail logs (api|worker|dashboard)
-#   gitguardian uninstall   stop everything and remove GitGuardian
+#   gitguardian commit -m "msg"   scan → agent fix → test → commit (+ fix PR via gh)
+#   gitguardian scan              scan + fix without committing
+#   gitguardian start             start dashboard, api, databases, langfuse
+#   gitguardian stop              stop all services
+#   gitguardian restart           restart app services (keeps db running)
+#   gitguardian status            show what is running + URLs
+#   gitguardian logs <svc>        tail logs (api|dashboard)
+#   gitguardian uninstall         stop everything and remove GitGuardian
 #
 set -euo pipefail
 
@@ -23,16 +25,6 @@ die()  { printf "\033[1;31m[x]\033[0m %s\n" "$*" >&2; exit 1; }
 
 [ -d "$GG_HOME" ] || die "GitGuardian not found at $GG_HOME (set GG_HOME if installed elsewhere)"
 mkdir -p "$LOG_DIR" "$PID_DIR"
-
-_smee_channel() {
-  # UI-saved value wins (app_config via API), then .env
-  local ch
-  ch=$(curl -s -m 2 http://localhost:8000/api/tunnel 2>/dev/null | grep -o '"channel_url":"[^"]*"' | cut -d'"' -f4 || true)
-  if [ -z "$ch" ] && [ -f "$GG_HOME/.env" ]; then
-    ch=$(grep -E '^SMEE_CHANNEL_URL=' "$GG_HOME/.env" | cut -d= -f2- || true)
-  fi
-  echo "$ch"
-}
 
 _start_bg() { # name, workdir, command...
   local name=$1 dir=$2; shift 2
@@ -63,79 +55,72 @@ cmd_start() {
   (cd "$GG_HOME" && uv run alembic upgrade head >/dev/null 2>&1) || warn "migrations skipped (db not ready yet?)"
 
   _start_bg api "$GG_HOME" uv run uvicorn apps.api.main:app --port 8000
-  _start_bg worker "$GG_HOME" uv run arq agents.worker.WorkerSettings
   _start_bg dashboard "$GG_HOME/apps/dashboard" npm run dev
 
-  local channel; channel=$(_smee_channel || true)
-  if [ -n "$channel" ]; then
-    docker rm -f gitguardian-smee >/dev/null 2>&1 || true
-    docker run -d --name gitguardian-smee --network host --restart unless-stopped \
-      node:22-alpine sh -c "npm install -g smee-client 2>/dev/null && smee --url $channel --target http://localhost:8000/webhooks/github" \
-      >/dev/null
-    say "webhook tunnel started → $channel"
-  else
-    warn "no smee channel configured — set one in the dashboard (Settings → Webhook tunnel)"
-  fi
+  say "Starting Langfuse (observability) — first boot takes ~2 min..."
+  docker compose -f "$COMPOSE_FILE" --profile langfuse up -d >/dev/null 2>&1 \
+    || warn "langfuse failed to start (optional — tracing will be skipped)"
 
   echo
   cmd_status
 }
 
 cmd_stop() {
-  _stop api; _stop worker; _stop dashboard
-  docker rm -f gitguardian-smee >/dev/null 2>&1 && say "tunnel stopped" || true
+  _stop api; _stop dashboard
 }
 
 cmd_status() {
   echo
   say "GitGuardian status"
-  for name in api worker dashboard; do
+  for name in api dashboard; do
     if [ -f "$PID_DIR/$name.pid" ] && kill -0 "$(cat "$PID_DIR/$name.pid")" 2>/dev/null; then
       printf "  \033[1;32m●\033[0m %-10s running (pid %s)\n" "$name" "$(cat "$PID_DIR/$name.pid")"
     else
       printf "  \033[1;31m●\033[0m %-10s stopped\n" "$name"
     fi
   done
-  docker ps --format '{{.Names}}' | grep -q gitguardian-smee \
-    && printf "  \033[1;32m●\033[0m %-10s running\n" "tunnel" \
-    || printf "  \033[1;31m●\033[0m %-10s stopped\n" "tunnel"
-  docker ps --format '{{.Names}}' | grep -q docker-postgres-1 \
-    && printf "  \033[1;32m●\033[0m %-10s running\n" "postgres" \
-    || printf "  \033[1;31m●\033[0m %-10s stopped\n" "postgres"
-  docker ps --format '{{.Names}}' | grep -q docker-redis-1 \
-    && printf "  \033[1;32m●\033[0m %-10s running\n" "redis" \
-    || printf "  \033[1;31m●\033[0m %-10s stopped\n" "redis"
+  for svc in docker-postgres-1 docker-redis-1 docker-langfuse-web-1; do
+    label=${svc#docker-}; label=${label%-1}
+    docker ps --format '{{.Names}}' | grep -q "$svc" \
+      && printf "  \033[1;32m●\033[0m %-10s running\n" "$label" \
+      || printf "  \033[1;31m●\033[0m %-10s stopped\n" "$label"
+  done
   echo
   echo "  Dashboard:  http://localhost:3000"
-  echo "  Setup:      http://localhost:3000/setup"
+  echo "  Traces:     http://localhost:3100  (Langfuse)"
   echo "  API docs:   http://localhost:8000/docs"
 }
 
 cmd_logs() {
   local name=${1:-api}
-  [ -f "$LOG_DIR/$name.log" ] || die "no log for $name (api|worker|dashboard)"
+  [ -f "$LOG_DIR/$name.log" ] || die "no log for $name (api|dashboard)"
   tail -f "$LOG_DIR/$name.log"
 }
 
 cmd_uninstall() {
   say "Stopping services..."
   cmd_stop || true
-  say "Removing databases and volumes..."
-  docker compose -f "$COMPOSE_FILE" down -v 2>/dev/null || true
+  say "Removing databases, langfuse, and volumes..."
+  docker compose -f "$COMPOSE_FILE" --profile langfuse down -v 2>/dev/null || true
   docker rmi gitguardian/test-runner:latest 2>/dev/null || true
   say "Removing $GG_HOME and CLI..."
   rm -rf "$GG_HOME" "$GG_STATE"
   rm -f "$HOME/.local/bin/gitguardian"
   echo
-  say "GitGuardian AI uninstalled. Your GitHub App and repos are untouched."
+  say "GitGuardian AI uninstalled. Your repos and GitHub PRs are untouched."
 }
 
 case "${1:-}" in
+  commit|scan)
+    # The core flow: run the agent pipeline in the USER'S current repo
+    # (uv --project uses the install's venv; cwd stays the user's repo)
+    uv run --project "$GG_HOME" gg "$@"
+    ;;
   start)     cmd_start ;;
   stop)      cmd_stop ;;
   restart)   cmd_stop; sleep 1; cmd_start ;;
   status)    cmd_status ;;
   logs)      cmd_logs "${2:-api}" ;;
   uninstall) cmd_uninstall ;;
-  *)         grep '^#' "$0" | head -10 | sed 's/^# \{0,1\}//' ;;
+  *)         grep '^#' "$0" | head -12 | sed 's/^# \{0,1\}//' ;;
 esac

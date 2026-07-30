@@ -19,7 +19,7 @@ export default function ScanDetailPage({ params }) {
   return (
     <>
       <h1>
-        Scan — {scan.repo} <span className="muted mono">@{scan.commit_sha.slice(0, 7)}</span>
+        Scan — {scan.repo} <span className="muted mono">({scan.branch})</span>
       </h1>
       <div className="panel row">
         <span className={`badge ${scan.status}`}>{scan.status}</span>
