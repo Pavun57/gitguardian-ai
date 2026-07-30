@@ -79,27 +79,36 @@ say "Installing dashboard dependencies..."
 say "Building the test-runner image..."
 docker build -t gitguardian/test-runner:latest -f infrastructure/docker/Dockerfile.test-runner infrastructure/docker
 
-# --- 6. done -------------------------------------------------------------------
+# --- 6. gitguardian CLI -------------------------------------------------------
+
+say "Installing the gitguardian command..."
+mkdir -p "$HOME/.local/bin"
+cp bin/gitguardian "$HOME/.local/bin/gitguardian"
+chmod +x "$HOME/.local/bin/gitguardian"
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) warn "~/.local/bin is not on your PATH — add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+esac
+
+# --- done ---------------------------------------------------------------------
 
 cat <<EOF
 
 $(printf '\033[1;32m')✔ GitGuardian AI installed$(printf '\033[0m')
 
-Start it (4 terminals, from $INSTALL_DIR):
+Everything is one command away:
 
-  # 1. API
-  uv run uvicorn apps.api.main:app --reload --port 8000
+  gitguardian start       start all services (db, api, worker, dashboard, tunnel)
+  gitguardian status      show what's running + URLs
+  gitguardian stop        stop all services
+  gitguardian logs api    tail a service log
+  gitguardian uninstall   remove everything
 
-  # 2. Worker (the agent pipeline)
-  uv run arq agents.worker.WorkerSettings
+Run it now:
 
-  # 3. Dashboard
-  cd apps/dashboard && npm run dev
+  gitguardian start
 
-  # 4. Webhook tunnel (dev) — get a channel at https://smee.io
-  docker run --rm -it --network host node:22-alpine \
-    sh -c "npm install -g smee-client && smee --url https://smee.io/YOUR_CHANNEL --target http://localhost:8000/webhooks/github"
-
-Then open http://localhost:3000/setup — it walks you through creating the
-GitHub App (one click) and pasting the credentials. No .env editing needed.
+Then open http://localhost:3000/setup — the wizard creates the GitHub App in
+one click and stores your credentials (encrypted). The smee webhook channel is
+enterable in the dashboard (Settings → Webhook tunnel) — no .env editing.
 EOF

@@ -20,6 +20,8 @@ export default function SettingsPage() {
   const [detect, setDetect] = useState(null);
   const [keys, setKeys] = useState([]);
   const [slackUrl, setSlackUrl] = useState("");
+  const [smeeUrl, setSmeeUrl] = useState("");
+  const [tunnel, setTunnel] = useState(null);
   const [testing, setTesting] = useState(null);
   const [testResult, setTestResult] = useState({});
   const [flash, setFlash] = useState(null);
@@ -32,6 +34,31 @@ export default function SettingsPage() {
       if (rows.length && !installationId) setInstallationId(String(rows[0].id));
     }).catch(() => {});
   const loadDetect = () => api("/api/agents/detect").then(setDetect).catch(() => {});
+  const loadTunnel = () =>
+    api("/api/tunnel").then((t) => {
+      setTunnel(t);
+      if (t.channel_url && !smeeUrl) setSmeeUrl(t.channel_url);
+    }).catch(() => {});
+
+  const startTunnel = async () => {
+    setFlash(null);
+    setError(null);
+    try {
+      await api("/api/tunnel", {
+        method: "POST",
+        body: JSON.stringify({ channel_url: smeeUrl }),
+      });
+      setFlash("Tunnel started — GitHub webhooks now reach this machine.");
+      loadTunnel();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const stopTunnel = async () => {
+    await api("/api/tunnel", { method: "DELETE" }).catch(() => {});
+    loadTunnel();
+  };
   // Resilience: pull installations straight from the GitHub API — doesn't
   // depend on the installation webhook having been delivered.
   const syncGitHub = () => api("/api/github/sync", { method: "POST" }).then(loadInstallations).catch(() => {});
@@ -40,6 +67,7 @@ export default function SettingsPage() {
     syncGitHub();
     loadKeys();
     loadDetect();
+    loadTunnel();
     // After "Connect GitHub" opens a new tab and the user installs the app,
     // coming back to this tab refreshes the installations list automatically.
     const onFocus = () => {
@@ -259,6 +287,40 @@ export default function SettingsPage() {
         <button onClick={saveSlack} disabled={!installationId || !slackUrl}>
           Save webhook
         </button>
+      </div>
+
+      <div className="panel">
+        <h2>Webhook tunnel (dev)</h2>
+        <p className="muted" style={{ marginBottom: 10 }}>
+          GitHub needs a public URL to reach this machine. Create a free channel at{" "}
+          <a href="https://smee.io" target="_blank" rel="noreferrer">smee.io</a>, paste it here —
+          we run the tunnel for you.{" "}
+          {tunnel && (
+            <span className={`badge ${tunnel.running ? "success" : "failed"}`}>
+              {tunnel.running ? "running" : "stopped"}
+            </span>
+          )}
+        </p>
+        <label>smee.io channel URL</label>
+        <input
+          type="text"
+          value={smeeUrl}
+          onChange={(e) => setSmeeUrl(e.target.value)}
+          placeholder="https://smee.io/xxxxxxxx"
+        />
+        <div className="row">
+          <button onClick={startTunnel} disabled={!smeeUrl}>
+            {tunnel?.running ? "Restart tunnel" : "Start tunnel"}
+          </button>
+          {tunnel?.running && (
+            <button className="secondary" onClick={stopTunnel}>
+              Stop
+            </button>
+          )}
+        </div>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Set this same URL as the Webhook URL in your GitHub App settings.
+        </p>
       </div>
     </>
   );

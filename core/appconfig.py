@@ -14,6 +14,7 @@ CONFIG_KEYS = (
     "github_app_slug",
     "github_webhook_secret",
     "github_app_private_key",
+    "smee_channel_url",
 )
 
 
