@@ -46,11 +46,15 @@ async def github_connect_url(_=Depends(_session)):
 
 @router.post("/github/sync")
 async def sync_installations(_=Depends(_session)):
-    """Pull installations + repos from the GitHub API and upsert them.
+    """Pull installations + repos from the GitHub API and RECONCILE the DB.
 
+    GitHub is the source of truth: installations removed on GitHub are marked
+    uninstalled, and repos no longer granted to the app are deactivated.
     Resilience path: the settings page doesn't depend on the installation
     webhook having been delivered (tunnel down at install time, etc.).
     """
+    from datetime import UTC, datetime
+
     import httpx
 
     from apps.api.github.auth import app_jwt, installation_token
@@ -69,12 +73,35 @@ async def sync_installations(_=Depends(_session)):
         )
         resp.raise_for_status()
         installations = resp.json()
+        remote_inst_ids = {i["id"] for i in installations}
 
         async with get_session_factory()() as s:
+            # Installations deleted on GitHub → mark uninstalled locally
+            local_insts = (
+                await s.scalars(
+                    select(Installation).where(Installation.uninstalled_at.is_(None))
+                )
+            ).all()
+            for local in local_insts:
+                if local.id not in remote_inst_ids:
+                    local.uninstalled_at = datetime.now(UTC)
+                    local_repos = (
+                        await s.scalars(
+                            select(Repository).where(Repository.installation_id == local.id)
+                        )
+                    ).all()
+                    for r in local_repos:
+                        r.is_active = False
+
             for inst in installations:
                 inst_id = inst["id"]
                 account = (inst.get("account") or {}).get("login", "")
-                await s.merge(Installation(id=inst_id, account_login=account))
+                existing = await s.get(Installation, inst_id)
+                if existing:
+                    existing.account_login = account
+                    existing.uninstalled_at = None
+                else:
+                    s.add(Installation(id=inst_id, account_login=account))
 
                 token = await installation_token(inst_id, http)
                 repos_resp = await http.get(
@@ -86,16 +113,33 @@ async def sync_installations(_=Depends(_session)):
                     },
                 )
                 repos_resp.raise_for_status()
-                for r in repos_resp.json().get("repositories", []):
-                    await s.merge(
-                        Repository(
-                            id=r["id"],
-                            installation_id=inst_id,
-                            full_name=r["full_name"],
-                            default_branch=r.get("default_branch") or "main",
-                        )
+                remote_repos = repos_resp.json().get("repositories", [])
+                remote_repo_ids = {r["id"] for r in remote_repos}
+
+                # Repos removed from the installation → deactivate
+                local_repos = (
+                    await s.scalars(
+                        select(Repository).where(Repository.installation_id == inst_id)
                     )
-                synced.append({"id": inst_id, "account": account})
+                ).all()
+                for r in local_repos:
+                    r.is_active = r.id in remote_repo_ids
+
+                for r in remote_repos:
+                    existing_repo = await s.get(Repository, r["id"])
+                    if existing_repo:
+                        existing_repo.is_active = True
+                        existing_repo.default_branch = r.get("default_branch") or "main"
+                    else:
+                        s.add(
+                            Repository(
+                                id=r["id"],
+                                installation_id=inst_id,
+                                full_name=r["full_name"],
+                                default_branch=r.get("default_branch") or "main",
+                            )
+                        )
+                synced.append({"id": inst_id, "account": account, "repos": len(remote_repos)})
             await s.commit()
     return {"synced": synced}
 
