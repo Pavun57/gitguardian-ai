@@ -1,0 +1,23 @@
+# API + worker image. Python 3.13 deliberately: asyncpg/langgraph wheels are the
+# likeliest breakage point on 3.14. Same image serves both processes (different CMD).
+FROM python:3.13-slim AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+COPY pyproject.toml uv.lock* ./
+RUN uv sync --no-dev --frozen || uv sync --no-dev
+
+COPY . .
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+EXPOSE 8000

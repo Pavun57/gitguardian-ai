@@ -1,0 +1,92 @@
+{
+  "detection_rate": 1.0,
+  "false_positives": 0,
+  "results": [
+    {
+      "file": "secrets_aws.py",
+      "category": "hardcoded-secret",
+      "detected": true,
+      "expected": [
+        "gitguardian.hardcoded-aws-key"
+      ],
+      "fired": [
+        "generic-api-key",
+        "gitguardian.hardcoded-aws-key"
+      ],
+      "false_positives": [],
+      "tools": [
+        "gitleaks",
+        "semgrep"
+      ]
+    },
+    {
+      "file": "sqli_format.py",
+      "category": "sql-injection",
+      "detected": true,
+      "expected": [
+        "gitguardian.python-sql-string-format"
+      ],
+      "fired": [
+        "gitguardian.python-sql-string-format"
+      ],
+      "false_positives": [],
+      "tools": [
+        "semgrep"
+      ]
+    },
+    {
+      "file": "command_injection.py",
+      "category": "command-injection",
+      "detected": true,
+      "expected": [
+        "gitguardian.python-subprocess-shell"
+      ],
+      "fired": [
+        "gitguardian.python-subprocess-shell"
+      ],
+      "false_positives": [],
+      "tools": [
+        "semgrep"
+      ]
+    },
+    {
+      "file": "eval_exec.py",
+      "category": "code-injection",
+      "detected": true,
+      "expected": [
+        "gitguardian.python-eval-exec"
+      ],
+      "fired": [
+        "gitguardian.python-eval-exec"
+      ],
+      "false_positives": [],
+      "tools": [
+        "semgrep"
+      ]
+    },
+    {
+      "file": "pickle_deser.py",
+      "category": "insecure-deserialization",
+      "detected": true,
+      "expected": [
+        "gitguardian.python-pickle-loads"
+      ],
+      "fired": [
+        "gitguardian.python-pickle-loads"
+      ],
+      "false_positives": [],
+      "tools": [
+        "semgrep"
+      ]
+    },
+    {
+      "file": "clean_sample.py",
+      "category": "clean",
+      "detected": true,
+      "expected": [],
+      "fired": [],
+      "false_positives": [],
+      "tools": []
+    }
+  ]
+}

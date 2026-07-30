@@ -1,0 +1,38 @@
+[
+  {
+    "file": "secrets_aws.py",
+    "category": "hardcoded-secret",
+    "expected_rules": ["gitguardian.hardcoded-aws-key"],
+    "expected_tools": ["semgrep", "gitleaks"]
+  },
+  {
+    "file": "sqli_format.py",
+    "category": "sql-injection",
+    "expected_rules": ["gitguardian.python-sql-string-format"],
+    "expected_tools": ["semgrep"]
+  },
+  {
+    "file": "command_injection.py",
+    "category": "command-injection",
+    "expected_rules": ["gitguardian.python-subprocess-shell"],
+    "expected_tools": ["semgrep"]
+  },
+  {
+    "file": "eval_exec.py",
+    "category": "code-injection",
+    "expected_rules": ["gitguardian.python-eval-exec"],
+    "expected_tools": ["semgrep"]
+  },
+  {
+    "file": "pickle_deser.py",
+    "category": "insecure-deserialization",
+    "expected_rules": ["gitguardian.python-pickle-loads"],
+    "expected_tools": ["semgrep"]
+  },
+  {
+    "file": "clean_sample.py",
+    "category": "clean",
+    "expected_rules": [],
+    "expected_tools": []
+  }
+]

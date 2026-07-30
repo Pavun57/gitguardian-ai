@@ -1,142 +1,116 @@
 # GitGuardian AI — Agentic Security on Every Push
 
-> An open-source AI agent that detects, classifies, and **fixes** security issues on every push — then opens a PR and waits for human approval.
+An agentic security system: on every `git push`, it scans for secrets and
+vulnerabilities, generates an AI fix, proves it with generated tests in an
+isolated container, and opens a pull request for human review.
+
+```
+git push → webhook → Semgrep+Gitleaks → classify → Claude fix → pytest in
+hardened Docker → branch + PR → check-run → you review & merge
+```
+
+**The human is always in the loop** — nothing merges without your approval.
+Low-confidence fixes never open PRs.
 
 ## Problem
 
-Developers push secrets, vulnerabilities, and misconfigurations to GitHub daily. Current tools detect issues but don't fix them. Code review bottlenecks mean vulnerabilities sit in repos for days.
+Developers push secrets, vulnerabilities, and misconfigurations to GitHub daily.
+Current tools detect issues but don't fix them. GitGuardian AI closes the loop:
+**detect → classify → generate fix → test fix → open PR → wait for human approval.**
 
-GitGuardian AI closes the loop: **detect → classify → generate fix → test fix → open PR → wait for human approval.**
+## Status
 
-## Why It Matters
+**Phase 1 — vertical slice ✅**
+- [x] GitHub App webhook receiver (HMAC-verified, deduped, <200ms ACK)
+- [x] Semgrep + Gitleaks in hardened sibling containers (custom rules)
+- [x] LangGraph agent pipeline (router → scanner → classifier → fix → test → PR)
+- [x] Claude fix generation (forced tool-use, full-file rewrite — ADR-0001)
+- [x] Generated pytest suites run in network-less, read-only containers (ADR-0002)
+- [x] Auto branch + PR with finding table, explanation, test evidence, cost
+- [x] Check-runs with inline annotations; BYOK key encryption (Fernet)
 
-- One leaked API key can kill a company. Every startup has this problem.
-- GitHub Advanced Security is $21/dev/month — startups can't afford it.
-- Snyk requires complex setup. This agent is install-and-forget.
+**Phase 2 — dashboard + notifications ✅**
+- [x] Next.js dashboard: overview, scan history, scan detail, repos, settings
+- [x] GitHub OAuth login; BYOK "connect your coding agent" UI
+- [x] HITL approval queue — approve (merge) / reject (close) fix PRs
+- [x] Slack notifications (encrypted per-installation webhook)
 
-## How It Works
+**Phase 3 — pre-commit + evals ✅**
+- [x] Pre-commit hook: staged-diff secret scan, blocks criticals (`security/hooks/`)
+- [x] Eval harness: dataset + detection-rate/FP metrics — currently **100% detection, 0 FPs** (`evals/`)
 
-```
-GitHub Push ──► Webhook Receiver (FastAPI)
-                     │
-                     ▼
-            ┌─────────────────┐
-            │ Security Scanner │
-            │ (Semgrep+Gitleaks)│
-            └────────┬────────┘
-                     │
-                     ▼
-            ┌─────────────────┐
-            │ Classification  │
-            │ Agent (severity) │
-            └────────┬────────┘
-                     │
-                     ▼
-            ┌─────────────────┐
-            │ Fix Generation  │
-            │ Agent (Claude)   │
-            └────────┬────────┘
-                     │
-                     ▼
-            ┌─────────────────┐
-            │ Test Generation │
-            │ Agent (pytest)   │
-            └────────┬────────┘
-                     │
-                     ▼
-            ┌─────────────────┐
-            │ PR Creation     │
-            │ (GitHub API)     │
-            └────────┬────────┘
-                     │
-                     ▼
-            ┌─────────────────┐
-            │ HITL Approval   │
-            │ Queue (Dashboard)│
-            └─────────────────┘
-```
+**Phase 4 — CI/CD + deployment ✅**
+- [x] GitHub Actions CI: lint → test → dogfood scan-evals → dashboard build → docker
+- [x] Deploy workflow: GHCR → Azure Container Apps (`docs/architecture/deployment.md`)
 
-## Agent Architecture
+## Architecture
 
-| Agent | Responsibility |
+See [`docs/architecture/phase1-pipeline.md`](docs/architecture/phase1-pipeline.md)
+for the full pipeline diagram, failure semantics, and guardrails. ADRs:
+[0001 full-file rewrite](docs/architecture/ADR-0001-full-file-rewrite.md),
+[0002 sibling containers](docs/architecture/ADR-0002-sibling-containers.md).
+
+## Setup
+
+### 1. Create the GitHub App
+
+GitHub → Settings → Developer settings → GitHub Apps → New:
+
+| Setting | Value |
 |---|---|
-| **Router Agent** | Classifies push event → routes to scanner |
-| **Scanner Agent** | Runs Semgrep/Gitleaks, parses SARIF |
-| **Classifier Agent** | Scores severity (Critical/High/Medium/Low) |
-| **Fix Agent** | Generates patched code with context awareness |
-| **Test Agent** | Generates pytest tests for the fix |
-| **PR Agent** | Creates branch, commits fix, opens PR with description |
+| Webhook URL | your smee.io channel URL (dev) |
+| Webhook secret | generate one (`openssl rand -hex 20`) |
+| Permissions | Contents: RW, Pull requests: RW, Checks: RW, Metadata: R |
+| Events | `push`, `installation`, `installation_repositories` |
 
-All agents traced in LangSmith with cost tracking.
+Download the private key to `secrets/github-app.pem`.
 
-## Tech Stack
+### 2. Configure
 
-- **Backend:** FastAPI, LangGraph, LangChain
-- **AI:** Claude (fix generation), GPT-4o-mini (classification)
-- **Security:** Semgrep, Gitleaks, Bandit
-- **Testing:** Pytest, Docker-in-Docker for isolation
-- **Database:** PostgreSQL (scan history), Redis (queue)
-- **Observability:** LangSmith
-- **Auth:** GitHub App JWT
-- **Deployment:** Docker, GitHub Actions, Azure
-
-## Feature Roadmap
-
-| Week | Feature | Deliverable |
-|---|---|---|
-| 1 | GitHub App + Webhooks | Push events captured, signatures verified |
-| 2 | Security Scanning | Semgrep + Gitleaks integration, SARIF parsing |
-| 3 | AI Fix Generation | Claude generates patched code with diffs |
-| 4 | Test Generation | Pytest tests auto-generated, run in Docker isolation |
-| 5 | PR Creation + HITL | Auto-branch, apply fix, push, open PR, human approval gate |
-| 6 | Dashboard + Evals | Cost tracking, accuracy metrics, 50 test cases |
-| 7 | Deployment + Docs | Docker, CI/CD, demo video, architecture docs |
-
-## Folder Structure
-
-```
-gitguardian-ai/
-├── apps/
-│   ├── api/                    # FastAPI webhook receiver
-│   └── dashboard/              # Next.js approval dashboard
-├── agents/
-│   ├── router/                 # Push event routing
-│   ├── scanner/                # Security scanning logic
-│   ├── classifier/             # Severity classification
-│   ├── fix_generator/          # Code fix generation
-│   ├── test_generator/         # Test generation
-│   └── pr_creator/             # GitHub PR creation
-├── security/
-│   ├── rules/                  # Custom Semgrep rules
-│   └── parsers/                # SARIF output parsers
-├── evals/
-│   ├── datasets/               # Vulnerable code samples
-│   ├── metrics/                # Fix accuracy, test pass rate
-│   └── benchmarks/             # Performance tests
-├── infrastructure/
-│   ├── docker/                 # Dockerfiles, compose
-│   └── github-actions/         # CI/CD workflows
-├── docs/
-│   ├── architecture/           # Diagrams, ADRs
-│   └── api/                    # OpenAPI specs
-└── README.md
+```bash
+cp .env.example .env
+# fill in: GITHUB_APP_ID, GITHUB_WEBHOOK_SECRET, ANTHROPIC_API_KEY,
+#          MASTER_ENCRYPTION_KEY (generate: python -c "from cryptography.fernet
+#          import Fernet; print(Fernet.generate_key().decode())"),
+#          SMEE_CHANNEL_URL
 ```
 
-## Deployment
+### 3. Run
 
-- Docker Compose for local/dev
-- Azure Container Apps for production
-- GitHub Actions: lint → test → security scan → build → deploy
-- Health checks for each agent service
-- Circuit breakers for GitHub API
+```bash
+cd infrastructure/docker
+docker compose up -d postgres redis
+docker compose --profile tunnel up api worker smee
+```
 
-## Future Improvements
+### 4. Install the app on a test repo, push a vulnerability, watch:
 
-- MCP server for IDE integration (VS Code extension)
-- Fine-tuned classification model
-- Support for more languages (currently Python/JS)
-- Auto-merge for low-severity fixes (configurable)
+- a `gitguardian/scan` check-run appears on the commit,
+- findings get inline annotations,
+- a `gitguardian/fix-<rule>-<sha>` branch + PR opens with the fix,
+  explanation, and passing-test evidence.
 
-## License
+## Development
 
-MIT — open source, contributions welcome.
+```bash
+uv sync
+uv run pytest -m "not docker and not e2e"   # fast suite
+uv run pytest -m docker                     # real scanner containers
+uv run ruff check && uv run ruff format
+uv run alembic upgrade head
+```
+
+## Guardrails (why this doesn't burn your API key or spam PRs)
+
+- Max 3 findings fixed per push, max 2 fix attempts each
+- $0.50/scan LLM budget, checked before every model call
+- Low-confidence fixes never open PRs
+- The app never scans its own fix branches (loop prevention)
+
+## Safety model
+
+- Webhook HMAC-SHA256 verification; delivery dedup
+- LLM-generated code runs only in containers with **no network**, read-only FS,
+  non-root user, no capabilities, capped CPU/RAM/PIDs, hard timeouts
+- BYOK keys Fernet-encrypted at rest; secrets scrubbed from all logs
+- Gitleaks output is redacted before storage — secrets never reach the DB or an LLM prompt

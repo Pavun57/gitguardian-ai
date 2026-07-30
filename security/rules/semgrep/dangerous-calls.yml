@@ -1,0 +1,50 @@
+rules:
+  - id: python-eval-exec
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: exec(...)
+    message: Use of eval()/exec() on potentially untrusted input.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      severity: high
+      category: security
+
+  - id: python-subprocess-shell
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.call(..., shell=True, ...)
+          - pattern: subprocess.run(..., shell=True, ...)
+          - pattern: subprocess.Popen(..., shell=True, ...)
+    message: subprocess with shell=True enables command injection. Pass an argument list instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      severity: high
+      category: security
+
+  - id: python-pickle-loads
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads(...)
+          - pattern: pickle.load(...)
+    message: Deserializing untrusted data with pickle allows arbitrary code execution.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      severity: high
+      category: security
+
+  - id: python-sql-string-format
+    patterns:
+      - pattern-either:
+          - pattern: $CURSOR.execute("..." % ...)
+          - pattern: $CURSOR.execute(f"...")
+          - pattern: $CURSOR.execute("..." + ...)
+    message: SQL query built by string formatting/concatenation — use parameterized queries.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      severity: high
+      category: security

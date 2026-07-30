@@ -1,0 +1,67 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Builds and pushes images to GHCR, then updates Azure Container Apps.
+# Required repo secrets:
+#   AZURE_CREDENTIALS          — service principal JSON (az ad sp create-for-rbac)
+#   AZURE_RESOURCE_GROUP
+#   AZURE_CONTAINERAPP_ENV     — Container Apps environment name
+# Images are tagged with the commit SHA.
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_API: ghcr.io/${{ github.repository }}/api
+  IMAGE_DASHBOARD: ghcr.io/${{ github.repository }}/dashboard
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push API/worker
+        run: |
+          docker build -f infrastructure/docker/Dockerfile.api \
+            -t $IMAGE_API:${{ github.sha }} -t $IMAGE_API:latest .
+          docker push $IMAGE_API:${{ github.sha }}
+          docker push $IMAGE_API:latest
+
+      - name: Build & push dashboard
+        run: |
+          docker build -f infrastructure/docker/Dockerfile.dashboard \
+            -t $IMAGE_DASHBOARD:${{ github.sha }} -t $IMAGE_DASHBOARD:latest apps/dashboard
+          docker push $IMAGE_DASHBOARD:${{ github.sha }}
+          docker push $IMAGE_DASHBOARD:latest
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Container Apps
+        run: |
+          az containerapp update \
+            --name gitguardian-api \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --image $IMAGE_API:${{ github.sha }}
+          az containerapp update \
+            --name gitguardian-worker \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --image $IMAGE_API:${{ github.sha }}
+          az containerapp update \
+            --name gitguardian-dashboard \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --image $IMAGE_DASHBOARD:${{ github.sha }}

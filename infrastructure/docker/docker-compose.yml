@@ -1,0 +1,90 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.api
+    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gitguardian:gitguardian@postgres:5432/gitguardian
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ../../:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.api
+    command: arq agents.worker.WorkerSettings
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gitguardian:gitguardian@postgres:5432/gitguardian
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ../../:/app
+      # Sibling-container access: scanners and test runs are spawned as sibling
+      # containers. The worker is trusted; the containers it spawns are hardened
+      # (no network, read-only FS, non-root, resource caps). See ADR-0002.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitguardian-workspaces:/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  dashboard:
+    build:
+      context: ../../apps/dashboard
+      dockerfile: ../../infrastructure/docker/Dockerfile.dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - api
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: gitguardian
+      POSTGRES_PASSWORD: gitguardian
+      POSTGRES_DB: gitguardian
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitguardian"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  # Dev-only webhook tunnel: forwards GitHub webhook deliveries to the api service.
+  # Set SMEE_CHANNEL_URL in .env (https://smee.io -> new channel). Remove for prod.
+  smee:
+    image: node:22-alpine
+    command: sh -c "npm install -g smee-client && smee --url $$SMEE_CHANNEL_URL --target http://api:8000/webhooks/github"
+    env_file: ../../.env
+    profiles: ["tunnel"]
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:
+  redis-data:
+  gitguardian-workspaces:

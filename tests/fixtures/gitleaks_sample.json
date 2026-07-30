@@ -1,0 +1,17 @@
+[
+  {
+    "Description": "AWS Access Key",
+    "StartLine": 5,
+    "EndLine": 5,
+    "StartColumn": 12,
+    "EndColumn": 31,
+    "Match": "AKIAIOSFODNN7EXAMPLE",
+    "Secret": "AKIAIOSFODNN7EXAMPLE",
+    "File": "config/settings.py",
+    "Line": "aws_key = \"AKIAIOSFODNN7EXAMPLE\"",
+    "RuleID": "aws-access-token",
+    "Entropy": 3.5,
+    "Commit": "abc123",
+    "Author": "dev"
+  }
+]

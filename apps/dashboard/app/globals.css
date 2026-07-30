@@ -1,0 +1,113 @@
+:root {
+  --bg: #0b0f14;
+  --panel: #131a22;
+  --border: #22303d;
+  --text: #dbe5ee;
+  --muted: #7d8fa1;
+  --accent: #3fb950;
+  --critical: #f85149;
+  --high: #f0883e;
+  --medium: #d29922;
+  --low: #58a6ff;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 14px;
+}
+
+a { color: var(--low); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+nav {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 28px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+nav .brand { font-weight: 700; color: var(--accent); font-size: 15px; }
+nav a { color: var(--muted); }
+nav a:hover { color: var(--text); text-decoration: none; }
+nav .spacer { flex: 1; }
+nav img { width: 24px; height: 24px; border-radius: 50%; vertical-align: middle; }
+
+main { max-width: 1100px; margin: 32px auto; padding: 0 24px; }
+
+h1 { font-size: 20px; margin-bottom: 20px; }
+h2 { font-size: 15px; margin: 24px 0 12px; color: var(--muted); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 28px; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.card .num { font-size: 26px; font-weight: 700; }
+.card .label { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+tr:last-child td { border-bottom: none; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.badge.critical { background: rgba(248, 81, 73, 0.15); color: var(--critical); }
+.badge.high { background: rgba(240, 136, 62, 0.15); color: var(--high); }
+.badge.medium { background: rgba(210, 153, 34, 0.15); color: var(--medium); }
+.badge.low { background: rgba(88, 166, 255, 0.15); color: var(--low); }
+.badge.success, .badge.completed, .badge.no_findings, .badge.merged { background: rgba(63, 185, 80, 0.15); color: var(--accent); }
+.badge.failed, .badge.closed { background: rgba(248, 81, 73, 0.15); color: var(--critical); }
+.badge.queued, .badge.running, .badge.awaiting_review, .badge.open { background: rgba(210, 153, 34, 0.15); color: var(--medium); }
+
+button, .btn {
+  background: var(--accent);
+  color: #04120a;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 13px;
+}
+button.secondary { background: var(--border); color: var(--text); }
+button.danger { background: var(--critical); color: #fff; }
+button:disabled { opacity: 0.5; cursor: default; }
+
+input[type="text"], input[type="password"] {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-family: inherit;
+  margin: 6px 0 12px;
+}
+label { color: var(--muted); font-size: 12px; }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+.muted { color: var(--muted); }
+.mono { font-family: inherit; }
+.row { display: flex; gap: 10px; align-items: center; }
+.flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 14px; background: rgba(63, 185, 80, 0.12); color: var(--accent); }
+.flash.error { background: rgba(248, 81, 73, 0.12); color: var(--critical); }
+
+.login-wrap { display: flex; align-items: center; justify-content: center; min-height: 70vh; }
+.login-box { text-align: center; }
+.login-box h1 { margin-bottom: 8px; }
+.login-box p { color: var(--muted); margin-bottom: 24px; }

@@ -1,0 +1,71 @@
+[project]
+name = "gitguardian-ai"
+version = "0.1.0"
+description = "Agentic security on every push: scan, fix, test, PR — with human approval."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi~=0.115",
+    "uvicorn[standard]~=0.34",
+    "pydantic~=2.11",
+    "pydantic-settings~=2.9",
+    "langgraph~=0.4",
+    "langgraph-checkpoint-postgres~=2.0",
+    "langchain-anthropic~=0.3",
+    "langchain-core~=0.3",
+    "anthropic~=0.60",
+    "httpx~=0.28",
+    "tenacity~=9.1",
+    "PyJWT[crypto]~=2.10",
+    "cryptography~=44.0",
+    "sqlalchemy[asyncio]~=2.0",
+    "asyncpg~=0.30",
+    "alembic~=1.15",
+    "redis~=5.2",
+    "arq~=0.26",
+    "docker~=7.1",
+    "structlog~=25.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest~=8.3",
+    "pytest-asyncio~=0.26",
+    "pytest-timeout~=2.4",
+    "respx~=0.22",
+    "ruff~=0.11",
+    "mypy~=1.15",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "apps", "agents", "security"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
+ignore = ["S101", "B008"]  # S101: asserts in tests; B008: Depends() is the FastAPI idiom
+
+[tool.ruff.lint.per-file-ignores]
+"tests/fixtures/vuln_app/**" = ["S", "UP031"]  # deliberately vulnerable fixture
+"evals/datasets/**" = ["S", "UP031"]           # deliberately vulnerable eval samples
+"core/db/alembic/versions/**" = ["E501"]       # auto-generated migrations
+"tests/**" = ["S108", "S607", "S603", "ASYNC"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "docker: tests requiring Docker containers",
+    "e2e: end-to-end tests requiring live GitHub + tunnel",
+]
+addopts = "--timeout=120"
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
