@@ -1,0 +1,16 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+node_modules
+.next
+apps/dashboard/node_modules
+apps/dashboard/.next
+.env
+secrets
+*.pem
+evals/metrics/last_run.json
