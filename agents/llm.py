@@ -49,7 +49,10 @@ class AgentConnection:
 
 
 async def resolve_agent(installation_id: int | None) -> AgentConnection:
-    """Which agent should work on this installation's fixes?"""
+    """Which agent should work on this installation's fixes?
+
+    Order: installation-specific connection → global default (NULL) → env.
+    """
     if installation_id is not None:
         async with get_session_factory()() as session:
             row = await session.scalar(
@@ -68,6 +71,21 @@ async def resolve_agent(installation_id: int | None) -> AgentConnection:
                     await log.aerror(
                         "stored credential undecryptable", installation_id=installation_id
                     )
+
+    # Global default connection (installation_id IS NULL)
+    async with get_session_factory()() as session:
+        row = await session.scalar(
+            select(ApiKey)
+            .where(ApiKey.installation_id.is_(None), ApiKey.provider.in_(PROVIDERS))
+            .order_by(ApiKey.created_at.desc())
+            .limit(1)
+        )
+        if row:
+            try:
+                return AgentConnection(row.provider, decrypt_key(row.ciphertext))
+            except EncryptionError:
+                await log.aerror("global credential undecryptable")
+
     fallback = get_settings().anthropic_api_key
     if fallback:
         return AgentConnection("anthropic", fallback)

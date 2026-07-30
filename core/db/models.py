@@ -40,12 +40,17 @@ class Repository(Base):
 
 
 class ApiKey(Base):
-    """BYOK: a user's provider key, Fernet-encrypted at rest. UI lands in Phase 2."""
+    """Agent connections: a user's provider credential, Fernet-encrypted at rest.
+
+    installation_id NULL = global default (used when an installation has no
+    specific connection)."""
 
     __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    installation_id: Mapped[int] = mapped_column(ForeignKey("installations.id"), index=True)
+    installation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("installations.id"), index=True, nullable=True
+    )
     provider: Mapped[str] = mapped_column(Text, default="anthropic")
     ciphertext: Mapped[bytes] = mapped_column()
     key_fingerprint: Mapped[str] = mapped_column(Text)  # "...wxyz" for display

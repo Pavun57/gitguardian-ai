@@ -44,6 +44,62 @@ async def github_connect_url(_=Depends(_session)):
     return {"url": f"https://github.com/apps/{slug}/installations/new"}
 
 
+@router.post("/github/sync")
+async def sync_installations(_=Depends(_session)):
+    """Pull installations + repos from the GitHub API and upsert them.
+
+    Resilience path: the settings page doesn't depend on the installation
+    webhook having been delivered (tunnel down at install time, etc.).
+    """
+    import httpx
+
+    from apps.api.github.auth import app_jwt, installation_token
+    from core.config import get_settings
+
+    base = get_settings().github_api_base
+    synced = []
+    async with httpx.AsyncClient(timeout=20) as http:
+        resp = await http.get(
+            f"{base}/app/installations",
+            headers={
+                "Authorization": f"Bearer {app_jwt()}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        resp.raise_for_status()
+        installations = resp.json()
+
+        async with get_session_factory()() as s:
+            for inst in installations:
+                inst_id = inst["id"]
+                account = (inst.get("account") or {}).get("login", "")
+                await s.merge(Installation(id=inst_id, account_login=account))
+
+                token = await installation_token(inst_id, http)
+                repos_resp = await http.get(
+                    f"{base}/installation/repositories",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Accept": "application/vnd.github+json",
+                        "X-GitHub-Api-Version": "2022-11-28",
+                    },
+                )
+                repos_resp.raise_for_status()
+                for r in repos_resp.json().get("repositories", []):
+                    await s.merge(
+                        Repository(
+                            id=r["id"],
+                            installation_id=inst_id,
+                            full_name=r["full_name"],
+                            default_branch=r.get("default_branch") or "main",
+                        )
+                    )
+                synced.append({"id": inst_id, "account": account})
+            await s.commit()
+    return {"synced": synced}
+
+
 @router.get("/installations")
 async def list_installations(_=Depends(_session)):
     """Installations known via webhook events — populated automatically on install."""
@@ -231,10 +287,17 @@ async def set_key(body: KeyIn, _=Depends(_session)):
 
 
 @router.delete("/keys/{installation_id}", status_code=204)
-async def delete_key(installation_id: int, _=Depends(_session)):
+async def delete_key(installation_id: str, _=Depends(_session)):
+    inst_id = None if installation_id == "global" else int(installation_id)
     async with get_session_factory()() as s:
         rows = (
-            await s.scalars(select(ApiKey).where(ApiKey.installation_id == installation_id))
+            await s.scalars(
+                select(ApiKey).where(
+                    ApiKey.installation_id.is_(None)
+                    if inst_id is None
+                    else ApiKey.installation_id == inst_id
+                )
+            )
         ).all()
         for r in rows:
             await s.delete(r)

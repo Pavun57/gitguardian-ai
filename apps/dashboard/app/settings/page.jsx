@@ -32,26 +32,36 @@ export default function SettingsPage() {
       if (rows.length && !installationId) setInstallationId(String(rows[0].id));
     }).catch(() => {});
   const loadDetect = () => api("/api/agents/detect").then(setDetect).catch(() => {});
+  // Resilience: pull installations straight from the GitHub API — doesn't
+  // depend on the installation webhook having been delivered.
+  const syncGitHub = () => api("/api/github/sync", { method: "POST" }).then(loadInstallations).catch(() => {});
 
   useEffect(() => {
-    loadInstallations();
+    syncGitHub();
     loadKeys();
     loadDetect();
     // After "Connect GitHub" opens a new tab and the user installs the app,
     // coming back to this tab refreshes the installations list automatically.
     const onFocus = () => {
-      loadInstallations();
+      syncGitHub();
       loadDetect();
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, []);
 
+  // While nothing is connected, keep polling so the page updates itself
+  // the moment the installation lands (webhook or sync).
+  useEffect(() => {
+    if (installations.length > 0) return;
+    const timer = setInterval(loadInstallations, 5000);
+    return () => clearInterval(timer);
+  }, [installations.length]);
+
   const connectGitHub = async () => {
     const { url } = await api("/api/github/connect-url");
     window.open(url, "_blank");
-    // The installation webhook registers it; refresh list after a moment
-    setTimeout(loadInstallations, 5000);
+    setTimeout(syncGitHub, 5000);
   };
 
   const connectAgent = async (provider) => {
@@ -60,9 +70,12 @@ export default function SettingsPage() {
     try {
       const r = await api("/api/agents/connect", {
         method: "POST",
-        body: JSON.stringify({ installation_id: parseInt(installationId), provider }),
+        body: JSON.stringify({
+          installation_id: installationId ? parseInt(installationId) : null,
+          provider,
+        }),
       });
-      setFlash(`${AGENTS[provider].label} connected (${r.fingerprint}) — detected automatically.`);
+      setFlash(`${AGENTS[provider].label} connected (${r.mode}) — no keys to paste.`);
       loadKeys();
     } catch (e) {
       setError(e.message);
@@ -75,7 +88,10 @@ export default function SettingsPage() {
     try {
       const r = await api("/api/agents/test-connection", {
         method: "POST",
-        body: JSON.stringify({ installation_id: parseInt(installationId) || 0, provider }),
+        body: JSON.stringify({
+          installation_id: installationId ? parseInt(installationId) : null,
+          provider,
+        }),
       });
       setTestResult((prev) => ({ ...prev, [provider]: r }));
     } catch (e) {
@@ -181,7 +197,7 @@ export default function SettingsPage() {
                   {testing === provider ? "Testing…" : "Test connection"}
                 </button>
                 <button
-                  disabled={!d?.connectable || !installationId}
+                  disabled={!d?.connectable}
                   onClick={() => connectAgent(provider)}
                 >
                   Connect
@@ -210,15 +226,15 @@ export default function SettingsPage() {
             </thead>
             <tbody>
               {keys.map((k) => (
-                <tr key={k.installation_id}>
-                  <td className="mono">{k.installation_id}</td>
+                <tr key={k.installation_id ?? "global"}>
+                  <td className="mono">{k.installation_id ?? "global"}</td>
                   <td>{AGENTS[k.provider]?.label ?? k.provider}</td>
                   <td className="mono">{k.fingerprint}</td>
                   <td>
                     <button
                       className="danger"
                       onClick={() =>
-                        api(`/api/keys/${k.installation_id}`, { method: "DELETE" }).then(loadKeys)
+                        api(`/api/keys/${k.installation_id ?? "global"}`, { method: "DELETE" }).then(loadKeys)
                       }
                     >
                       Disconnect

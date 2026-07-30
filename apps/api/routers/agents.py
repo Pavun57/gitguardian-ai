@@ -69,7 +69,7 @@ async def detect(_=Depends(_session)):
 
 
 class ConnectIn(BaseModel):
-    installation_id: int
+    installation_id: int | None = None  # None = global default connection
     provider: str  # 'claude_code' | 'codex'
 
 
@@ -94,11 +94,18 @@ async def connect(body: ConnectIn, _=Depends(_session)):
     credential = _credential_for(body.provider)
 
     async with get_session_factory()() as s:
-        inst = await s.get(Installation, body.installation_id)
-        if not inst:
-            raise HTTPException(404, "installation not found")
+        if body.installation_id is not None:
+            inst = await s.get(Installation, body.installation_id)
+            if not inst:
+                raise HTTPException(404, "installation not found")
         existing = (
-            await s.scalars(select(ApiKey).where(ApiKey.installation_id == body.installation_id))
+            await s.scalars(
+                select(ApiKey).where(
+                    ApiKey.installation_id.is_(None)
+                    if body.installation_id is None
+                    else ApiKey.installation_id == body.installation_id
+                )
+            )
         ).all()
         for row in existing:
             await s.delete(row)
