@@ -25,6 +25,10 @@ from core.logging import get_logger
 
 log = get_logger("agent_backends")
 
+# Marker stored instead of a credential when the CLI manages its own login
+# (local installs: keyring / ~/.claude / ~/.codex) — no env override needed.
+CLI_MANAGED = "cli-managed"
+
 
 @dataclass
 class AgentResponse:
@@ -70,9 +74,14 @@ def extract_json(text: str) -> dict:
 
 
 class ClaudeCodeBackend(AgentBackend):
-    """Headless Claude Code: `claude -p` with the user's OAuth token."""
+    """Headless Claude Code: `claude -p`.
 
-    def __init__(self, oauth_token: str, model: str | None = None):
+    Credential can be an explicit OAuth token (CI/Docker) or the CLI_MANAGED
+    marker (default for local runs): then no env override is passed and the
+    CLI uses its own stored login (keyring or ~/.claude/.credentials.json).
+    """
+
+    def __init__(self, oauth_token: str | None, model: str | None = None):
         self._token = oauth_token
         self._model = model
 
@@ -83,10 +92,9 @@ class ClaudeCodeBackend(AgentBackend):
     async def complete(self, prompt: str, *, max_tokens: int = 8192) -> AgentResponse:
         import os
 
-        env = {
-            **os.environ,
-            "CLAUDE_CODE_OAUTH_TOKEN": self._token,
-        }
+        env = dict(os.environ)
+        if self._token and self._token != CLI_MANAGED:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = self._token
         cmd = ["claude", "-p", prompt, "--output-format", "json"]
         if self._model:
             cmd += ["--model", self._model]
@@ -123,8 +131,8 @@ def _write_file(path: str, content: str) -> None:
 class CodexBackend(AgentBackend):
     """Headless Codex CLI: `codex exec`."""
 
-    def __init__(self, credential: str, model: str | None = None):
-        # credential: OPENAI_API_KEY value, or full auth.json content
+    def __init__(self, credential: str | None, model: str | None = None):
+        # credential: OPENAI_API_KEY value, auth.json content, CLI_MANAGED, or None
         self._credential = credential
         self._model = model
 
@@ -140,16 +148,21 @@ class CodexBackend(AgentBackend):
         if self._model:
             cmd += ["--model", self._model]
 
-        if self._credential.strip().startswith("{"):
-            # ChatGPT auth.json — write to a temp CODEX_HOME
-            import tempfile
+        if self._credential and self._credential != CLI_MANAGED:
+            if self._credential.strip().startswith("{"):
+                # Pasted ChatGPT auth.json (Docker/CI) — temp CODEX_HOME on a
+                # non-tmp path (codex refuses to create helpers under /tmp)
+                from pathlib import Path
 
-            codex_home = tempfile.mkdtemp(prefix="gg-codex-")
-            auth_path = f"{codex_home}/auth.json"
-            await asyncio.to_thread(_write_file, auth_path, self._credential)
-            env["CODEX_HOME"] = codex_home
-        else:
-            env["OPENAI_API_KEY"] = self._credential
+                codex_home = Path.home() / ".cache" / "gitguardian-codex"
+                codex_home.mkdir(parents=True, exist_ok=True)
+                await asyncio.to_thread(
+                    _write_file, str(codex_home / "auth.json"), self._credential
+                )
+                env["CODEX_HOME"] = str(codex_home)
+            else:
+                env["OPENAI_API_KEY"] = self._credential
+        # CLI_MANAGED / no credential: use the user's own `codex login` state
 
         cmd.append(prompt)
         proc = await asyncio.create_subprocess_exec(

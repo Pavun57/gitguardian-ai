@@ -37,6 +37,14 @@ export default function SettingsPage() {
     loadInstallations();
     loadKeys();
     loadDetect();
+    // After "Connect GitHub" opens a new tab and the user installs the app,
+    // coming back to this tab refreshes the installations list automatically.
+    const onFocus = () => {
+      loadInstallations();
+      loadDetect();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, []);
 
   const connectGitHub = async () => {

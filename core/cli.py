@@ -31,8 +31,7 @@ async def set_key(installation_id: int, provider: str, plaintext: str) -> None:
         )
         await session.commit()
     print(
-        f"Stored {provider} credential {fingerprint(plaintext)} "
-        f"for installation {installation_id}"
+        f"Stored {provider} credential {fingerprint(plaintext)} for installation {installation_id}"
     )
 
 

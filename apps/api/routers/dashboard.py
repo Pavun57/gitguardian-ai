@@ -49,9 +49,7 @@ async def list_installations(_=Depends(_session)):
     """Installations known via webhook events — populated automatically on install."""
     async with get_session_factory()() as s:
         rows = (
-            await s.scalars(
-                select(Installation).where(Installation.uninstalled_at.is_(None))
-            )
+            await s.scalars(select(Installation).where(Installation.uninstalled_at.is_(None)))
         ).all()
         return [{"id": r.id, "account": r.account_login} for r in rows]
 

@@ -26,7 +26,7 @@ export default function Nav() {
       <span className="spacer" />
       {user && (
         <span className="muted">
-          <img src={user.avatar} alt="" /> {user.login}
+          {user.avatar ? <img src={user.avatar} alt="" /> : null} {user.login}
         </span>
       )}
     </nav>
