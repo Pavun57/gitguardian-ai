@@ -126,6 +126,25 @@ async def _safe_check(installation_id, repo, check_id, conclusion, summary) -> N
 
 async def startup(ctx: dict) -> None:
     configure_logging()
+    # Scans left in running/queued by a previous worker death are stuck forever
+    # otherwise — mark them interrupted so the dashboard shows the truth.
+    from datetime import UTC, datetime
+
+    from sqlalchemy import update
+
+    async with get_session_factory()() as session:
+        result = await session.execute(
+            update(Scan)
+            .where(Scan.status.in_(["running", "queued"]), Scan.finished_at.is_(None))
+            .values(
+                status="failed",
+                error="interrupted: worker restarted mid-scan",
+                finished_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+        if result.rowcount:
+            await log.awarning("marked stale scans as interrupted", count=result.rowcount)
     await log.ainfo("worker started")
 
 
