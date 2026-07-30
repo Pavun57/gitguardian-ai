@@ -81,21 +81,35 @@ async def apply_fix(workdir: str, finding: Finding, fix: FixResult) -> None:
         raise FixValidationError(f"fix touched unexpected files: {sorted(unexpected)}")
 
 
-async def validate_with_rescan(workdir: str, finding: Finding) -> None:
+async def validate_with_rescan(
+    workdir: str, finding: Finding, baseline_rules: set[str] | None = None
+) -> None:
     """Re-run Semgrep on the patched file: original rule must be gone, and no
-    new finding of equal-or-higher severity may appear."""
+    genuinely NEW finding of equal-or-higher severity may appear.
+
+    `baseline_rules` = rule_ids already present in the file before the fix
+    (from the scan's finding list). Without it, a file with two issues would
+    be unfixable one-at-a-time: fixing finding A while finding B remains would
+    always read as "the fix introduced B".
+    """
     sarif, err = SemgrepRunner().scan(workdir, target_file=finding.file_path)
     if err or not sarif:
         await log.awarning("re-scan failed; skipping validation", error=(err or "")[:300])
         return  # validation is best-effort — the test suite is the harder gate
 
+    baseline = baseline_rules or set()
     findings = parse_sarif(sarif, repo_prefix="/work/")
     still_present = [f for f in findings if f.rule_id == finding.rule_id]
     if still_present:
         raise FixValidationError(
             f"rule {finding.rule_id} still fires after the fix ({len(still_present)}x)"
         )
-    worse = [f for f in findings if SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER[finding.severity]]
+    worse = [
+        f
+        for f in findings
+        if f.rule_id not in baseline
+        and SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER[finding.severity]
+    ]
     if worse:
         raise FixValidationError(
             f"fix introduced new {worse[0].severity} finding: {worse[0].rule_id}"

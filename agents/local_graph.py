@@ -334,11 +334,32 @@ def build_local_graph(checkpointer=None):
 
 
 async def _fix_apply_wrapper(state: GuardianState) -> dict:
-    """Apply + validate; validation failures become retry context."""
+    """Apply + validate; validation failures become retry context.
+
+    On failure the working tree is restored (original file back, generated
+    test file removed) so a retry starts from a clean base, not the rejected
+    fix. On success `last_test_output` is cleared — otherwise a stale
+    "Fix REJECTED" from a previous attempt loops the graph forever.
+    """
+    workdir = state["workdir"]
+    finding = state["current_finding"]
+    fix = state["fix"]
+
+    from pathlib import Path
+
+    target = Path(workdir) / finding.file_path
+    test_file = Path(workdir) / fix.test_file_path
+    original = target.read_bytes()
+
     try:
-        await apply_fix(state["workdir"], state["current_finding"], state["fix"])
-        await validate_with_rescan(state["workdir"], state["current_finding"])
+        await apply_fix(workdir, finding, fix)
+        baseline = {
+            f.rule_id for f in state.get("findings", []) if f.file_path == finding.file_path
+        }
+        await validate_with_rescan(workdir, finding, baseline_rules=baseline)
     except FixValidationError as e:
+        target.write_bytes(original)
+        test_file.unlink(missing_ok=True)
         attempts = state.get("fix_attempts", 0) + 1
         await log.awarning("fix validation failed", error=str(e), attempts=attempts)
         return {
@@ -346,4 +367,4 @@ async def _fix_apply_wrapper(state: GuardianState) -> dict:
             "last_test_output": f"Fix REJECTED by validator: {e}",
             "events": [f"fix_apply: validation failed ({e})"],
         }
-    return {"events": ["fix_apply: applied + re-scan clean"]}
+    return {"last_test_output": None, "events": ["fix_apply: applied + re-scan clean"]}
