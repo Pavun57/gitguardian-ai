@@ -125,11 +125,25 @@ Respond with ONLY a JSON object (no markdown fences, no prose) with exactly thes
 
 
 async def _generate_via_anthropic(state: GuardianState, prompt: str, credential: str):
-    """LangChain forced tool-use — guaranteed structured output."""
+    """LangChain forced tool-use — guaranteed structured output.
+
+    Fallback: some gateways enable extended thinking by default, which forbids
+    named tool_choice ("specified"). On that 400, retry with tool_choice=auto
+    and a prompt instruction making the tool call mandatory.
+    """
     settings = get_settings()
     model = make_chat_model(settings.fix_model, credential, temperature=0.2)
-    forced = model.bind_tools([FIX_TOOL], tool_choice={"type": "tool", "name": "submit_fix"})
-    resp = await forced.ainvoke(prompt)
+
+    try:
+        forced = model.bind_tools([FIX_TOOL], tool_choice={"type": "tool", "name": "submit_fix"})
+        resp = await forced.ainvoke(prompt)
+    except Exception as e:
+        if "tool_choice" not in str(e):
+            raise
+        auto = model.bind_tools([FIX_TOOL], tool_choice={"type": "auto"})
+        resp = await auto.ainvoke(
+            prompt + "\n\nYou MUST respond by calling the submit_fix tool — no plain text."
+        )
 
     tokens_in = resp.usage_metadata.get("input_tokens", 0) if resp.usage_metadata else 0
     tokens_out = resp.usage_metadata.get("output_tokens", 0) if resp.usage_metadata else 0
@@ -145,8 +159,9 @@ async def _generate_via_cli(state: GuardianState, prompt: str, conn):
     backend = make_cli_backend(conn)
     resp = await backend.complete(prompt + _CLI_SCHEMA_INSTRUCTION)
     args = extract_json(resp.text)
-    # Subscription-billed: tokens recorded, but no dollar cost we can price
-    return args, 0.0, resp.tokens_in, resp.tokens_out
+    # Claude Code reports real cost in its envelope; otherwise estimate from tokens
+    cost = resp.cost_usd or estimate_cost(get_settings().fix_model, resp.tokens_in, resp.tokens_out)
+    return args, cost, resp.tokens_in, resp.tokens_out
 
 
 async def generate_fix(state: GuardianState) -> tuple[FixResult, float, int, int]:

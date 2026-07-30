@@ -1,131 +1,107 @@
 # GitGuardian AI — Agentic Security on Every Push
 
 An agentic security system: on every `git push`, it scans for secrets and
-vulnerabilities, generates an AI fix, proves it with generated tests in an
-isolated container, and opens a pull request for human review.
+vulnerabilities, generates an AI fix **with your own coding agent** (Claude Code
+or Codex — no API key needed), proves it with generated tests in an isolated
+container, and opens a pull request for human review.
 
 ```
-git push → webhook → Semgrep+Gitleaks → classify → Claude fix → pytest in
-hardened Docker → branch + PR → check-run → you review & merge
+git push → webhook → Semgrep+Gitleaks → classify → your coding agent fixes →
+pytest in hardened Docker → branch + PR → check-run → you review & merge
 ```
 
 **The human is always in the loop** — nothing merges without your approval.
-Low-confidence fixes never open PRs.
 
-## Problem
+## One-line install
 
-Developers push secrets, vulnerabilities, and misconfigurations to GitHub daily.
-Current tools detect issues but don't fix them. GitGuardian AI closes the loop:
-**detect → classify → generate fix → test fix → open PR → wait for human approval.**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Pavun57/gitguardian-ai/main/install.sh | bash
+```
 
-## Status
+The installer checks prerequisites (docker, node 20+, git), clones the repo,
+generates secrets, starts Postgres + Redis, installs dependencies, and runs
+migrations. When it finishes:
 
-**Phase 1 — vertical slice ✅**
-- [x] GitHub App webhook receiver (HMAC-verified, deduped, <200ms ACK)
-- [x] Semgrep + Gitleaks in hardened sibling containers (custom rules)
-- [x] LangGraph agent pipeline (router → scanner → classifier → fix → test → PR)
-- [x] Claude fix generation (forced tool-use, full-file rewrite — ADR-0001)
-- [x] Generated pytest suites run in network-less, read-only containers (ADR-0002)
-- [x] Auto branch + PR with finding table, explanation, test evidence, cost
-- [x] Check-runs with inline annotations; BYOK key encryption (Fernet)
+```bash
+# 4 terminals from ~/gitguardian-ai:
+uv run uvicorn apps.api.main:app --reload --port 8000    # API
+uv run arq agents.worker.WorkerSettings                  # agent pipeline
+cd apps/dashboard && npm run dev                         # dashboard (localhost:3000)
+docker run --rm -it --network host node:22-alpine \
+  sh -c "npm install -g smee-client && smee --url https://smee.io/YOUR_CHANNEL --target http://localhost:8000/webhooks/github"
+```
 
-**Phase 2 — dashboard + notifications ✅**
-- [x] Next.js dashboard: overview, scan history, scan detail, repos, settings
-- [x] GitHub OAuth login; **connect your coding agent** — Anthropic API key,
-  Claude Code (subscription, no key), or Codex CLI
-- [x] HITL approval queue — approve (merge) / reject (close) fix PRs
-- [x] Slack notifications (encrypted per-installation webhook)
+Then open **http://localhost:3000/setup** — the wizard:
 
-**Phase 3 — pre-commit + evals ✅**
-- [x] Pre-commit hook: staged-diff secret scan, blocks criticals (`security/hooks/`)
-- [x] Eval harness: dataset + detection-rate/FP metrics — currently **100% detection, 0 FPs** (`evals/`)
+1. **Creates the GitHub App in one click** (manifest flow: permissions, events,
+   webhook URL all pre-filled)
+2. Lets you paste the App ID + private key — stored **encrypted** in the DB,
+   no `.env` editing
+3. **Connect GitHub** → install on your repos (they register automatically)
+4. **Connect your coding agent** — auto-detects Claude Code / Codex on your
+   machine, tests the connection, done. Fixes bill *your* subscription.
 
-**Phase 4 — CI/CD + deployment ✅**
-- [x] GitHub Actions CI: lint → test → dogfood scan-evals → dashboard build → docker
-- [x] Deploy workflow: GHCR → Azure Container Apps (`docs/architecture/deployment.md`)
+## How it works
 
-## Architecture
-
-See [`docs/architecture/phase1-pipeline.md`](docs/architecture/phase1-pipeline.md)
-for the full pipeline diagram, failure semantics, and guardrails. ADRs:
-[0001 full-file rewrite](docs/architecture/ADR-0001-full-file-rewrite.md),
-[0002 sibling containers](docs/architecture/ADR-0002-sibling-containers.md).
-
-## Setup
-
-### 1. Create the GitHub App
-
-GitHub → Settings → Developer settings → GitHub Apps → New:
-
-| Setting | Value |
+| Stage | What happens |
 |---|---|
-| Webhook URL | your smee.io channel URL (dev) |
-| Webhook secret | generate one (`openssl rand -hex 20`) |
-| Permissions | Contents: RW, Pull requests: RW, Checks: RW, Metadata: R |
-| Events | `push`, `installation`, `installation_repositories` |
+| **Webhook** | HMAC-SHA256 verified, deduped, ACKs <200ms, job queued (arq/Redis) |
+| **Scan** | Semgrep (custom rules) + Gitleaks in hardened sibling containers → normalized findings |
+| **Classify** | Fixture paths dropped by rule; LLM FP-filter (keep-when-in-doubt); top 3 by severity |
+| **Fix** | Your coding agent produces a full-file rewrite + pytest suite (validated: syntax, single-file diff, re-scan) |
+| **Test** | Generated tests run in a container with **no network**, read-only FS, non-root, resource caps — ≤2 retries with failure context |
+| **PR** | Deterministic branch `gitguardian/fix-<rule>-<sha>`, PR with finding table, explanation, test evidence, cost |
+| **Review** | Check-run annotations inline; approve/reject from the dashboard or GitHub |
 
-Download the private key to `secrets/github-app.pem`.
+**Guardrails:** max 3 findings/push · max 2 fix attempts · $0.50/scan budget ·
+low-confidence fixes never open PRs · the app never scans its own fix branches.
 
-### 2. Configure
+## Cost tracking
 
-```bash
-cp .env.example .env
-# fill in: GITHUB_APP_ID, GITHUB_WEBHOOK_SECRET, ANTHROPIC_API_KEY,
-#          MASTER_ENCRYPTION_KEY (generate: python -c "from cryptography.fernet
-#          import Fernet; print(Fernet.generate_key().decode())"),
-#          SMEE_CHANNEL_URL
-```
+Claude Code reports its real per-call cost (`total_cost_usd`); API-key backends
+are priced from token counts. Every scan, fix, and the dashboard totals show
+actual spend.
 
-### 3. Run
+## Dashboard
 
-```bash
-cd infrastructure/docker
-docker compose up -d postgres redis
-docker compose --profile tunnel up api worker smee
-```
-
-### 4. Install the app on a test repo, push a vulnerability, watch:
-
-- a `gitguardian/scan` check-run appears on the commit,
-- findings get inline annotations,
-- a `gitguardian/fix-<rule>-<sha>` branch + PR opens with the fix,
-  explanation, and passing-test evidence.
-
-## Connect your coding agent
-
-Fixes are generated by *your* agent, with *your* credentials — pick one in the
-dashboard (Settings → Connect your coding agent):
-
-| Agent | What you paste | Billing |
-|---|---|---|
-| **Claude Code** | Token from `claude setup-token` | Your Claude subscription — no API key |
-| **Codex CLI** | OpenAI key or `~/.codex/auth.json` | Your OpenAI account |
-| **Anthropic API** | `sk-ant-...` key | Pay-per-token |
-
-All credentials are Fernet-encrypted at rest, never displayed again, and
-scrubbed from logs.
+- **Overview** — scans, findings, fixes, open PRs, total LLM spend
+- **Scans** — full history with per-finding detail, fix explanations, PR links
+- **Approvals** — the HITL queue: approve (merge) / reject (close) fix PRs
+- **Repos** — connected repositories (auto-synced with GitHub)
+- **Settings** — connect GitHub, connect your coding agent, Slack webhooks
+- **Setup** — GitHub App creation wizard
 
 ## Development
 
 ```bash
-uv sync
-uv run pytest -m "not docker and not e2e"   # fast suite
-uv run pytest -m docker                     # real scanner containers
-uv run ruff check && uv run ruff format
-uv run alembic upgrade head
+git clone https://github.com/Pavun57/gitguardian-ai.git && cd gitguardian-ai
+
+uv sync                                        # Python deps
+docker compose -f infrastructure/docker/docker-compose.yml up -d postgres redis
+uv run alembic upgrade head                    # migrations
+(cd apps/dashboard && npm install)             # dashboard deps
+
+# run: api / worker / dashboard / smee tunnel (see above)
+
+uv run pytest -m "not docker and not e2e"      # fast suite
+uv run pytest -m docker                        # real scanner containers
+uv run python -m evals.metrics.run_eval        # detection eval (100%/0 FPs gate)
+uv run ruff check && uv run ruff format        # lint
 ```
 
-## Guardrails (why this doesn't burn your API key or spam PRs)
+## Architecture
 
-- Max 3 findings fixed per push, max 2 fix attempts each
-- $0.50/scan LLM budget, checked before every model call
-- Low-confidence fixes never open PRs
-- The app never scans its own fix branches (loop prevention)
+- `apps/api` — FastAPI webhook receiver + dashboard REST API
+- `apps/dashboard` — Next.js dashboard
+- `agents/` — LangGraph pipeline (router → scanner → classifier → fix → test → PR → notify) + pluggable agent backends (Claude Code, Codex, Anthropic API)
+- `security/` — scanner runners (hardened containers), SARIF/gitleaks parsers, custom Semgrep rules, pre-commit hook
+- `core/` — config, DB models, crypto (Fernet), runtime app-config
+- `evals/` — vulnerable-sample dataset + detection metrics
+- `docs/architecture/` — pipeline doc, ADRs ([full-file rewrite](docs/architecture/ADR-0001-full-file-rewrite.md), [sibling containers](docs/architecture/ADR-0002-sibling-containers.md)), [deployment](docs/architecture/deployment.md)
 
 ## Safety model
 
-- Webhook HMAC-SHA256 verification; delivery dedup
-- LLM-generated code runs only in containers with **no network**, read-only FS,
-  non-root user, no capabilities, capped CPU/RAM/PIDs, hard timeouts
-- BYOK keys Fernet-encrypted at rest; secrets scrubbed from all logs
-- Gitleaks output is redacted before storage — secrets never reach the DB or an LLM prompt
+- Webhook HMAC-SHA256 verification + delivery dedup
+- LLM-generated code executes only in network-less, read-only, non-root containers
+- Credentials (GitHub key, agent tokens, Slack webhooks) Fernet-encrypted at rest
+- Secrets scrubbed from logs; gitleaks output redacted before it can reach the DB or a prompt

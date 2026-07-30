@@ -3,14 +3,14 @@
 import hashlib
 import hmac
 
-from core.config import get_settings
+from core.appconfig import get_config
 
 
 class SignatureError(Exception):
     pass
 
 
-def verify_signature(body: bytes, signature_header: str | None) -> None:
+async def verify_signature(body: bytes, signature_header: str | None) -> None:
     """Verify X-Hub-Signature-256. Raises SignatureError on any mismatch.
 
     Uses hmac.compare_digest against a hex digest computed over the *raw* bytes —
@@ -19,9 +19,9 @@ def verify_signature(body: bytes, signature_header: str | None) -> None:
     if not signature_header:
         raise SignatureError("Missing X-Hub-Signature-256 header")
 
-    secret = get_settings().github_webhook_secret
+    secret = await get_config("github_webhook_secret")
     if not secret:
-        raise SignatureError("GITHUB_WEBHOOK_SECRET is not configured")
+        raise SignatureError("github_webhook_secret is not configured")
 
     if not signature_header.startswith("sha256="):
         raise SignatureError("Unexpected signature scheme")

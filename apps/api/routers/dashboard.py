@@ -30,6 +30,80 @@ def _session(request: Request) -> dict:
     return read_session(request)
 
 
+# --- GitHub App configuration (setup wizard) ---
+
+
+class GitHubConfigIn(BaseModel):
+    app_id: str | None = None
+    app_slug: str | None = None
+    webhook_secret: str | None = None
+    private_key: str | None = None  # full PEM contents
+
+
+@router.get("/github/config")
+async def get_github_config(_=Depends(_session)):
+    """Setup status: which credentials are set, plus the URLs to paste into GitHub."""
+    from core.appconfig import config_status, get_config
+    from core.config import get_settings
+
+    status = await config_status()
+    slug = await get_config("github_app_slug")
+    s = get_settings()
+    return {
+        "configured": status,
+        "all_set": all(status.values()),
+        "app_slug": slug,
+        "webhook_url": f"{s.api_base_url}/webhooks/github",
+        "setup_url": f"{s.dashboard_url}/settings",
+        "manifest_url": f"{s.api_base_url}/api/github/manifest",
+    }
+
+
+@router.post("/github/config")
+async def set_github_config(body: GitHubConfigIn, _=Depends(_session)):
+    from core.appconfig import set_config
+
+    if body.app_id:
+        await set_config("github_app_id", body.app_id)
+    if body.app_slug:
+        await set_config("github_app_slug", body.app_slug)
+    if body.webhook_secret:
+        await set_config("github_webhook_secret", body.webhook_secret)
+    if body.private_key:
+        if "PRIVATE KEY" not in body.private_key:
+            raise HTTPException(400, "that doesn't look like a PEM private key")
+        await set_config("github_app_private_key", body.private_key)
+    return {"status": "saved"}
+
+
+@router.get("/github/manifest")
+async def github_app_manifest(_=Depends(_session)):
+    """GitHub App Manifest flow: pre-fills the entire app registration form.
+
+    POST this manifest to https://github.com/settings/apps/new (the UI does it
+    via a form) — GitHub creates the app with correct permissions, events, and
+    URLs in one click instead of manual form filling.
+    """
+    from core.config import get_settings
+
+    s = get_settings()
+    return {
+        "name": "GitGuardian AI (dev)",
+        "url": s.dashboard_url,
+        "hook_attributes": {"url": f"{s.api_base_url}/webhooks/github", "active": True},
+        "redirect_url": f"{s.dashboard_url}/settings",
+        "callback_urls": [f"{s.api_base_url}/auth/github/callback"],
+        "public": False,
+        "default_permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "checks": "write",
+            "metadata": "read",
+        },
+        "default_events": ["push", "installation", "installation_repositories"],
+    }
+
+
 # --- repos / installations ---
 
 
@@ -66,7 +140,7 @@ async def sync_installations(_=Depends(_session)):
         resp = await http.get(
             f"{base}/app/installations",
             headers={
-                "Authorization": f"Bearer {app_jwt()}",
+                "Authorization": f"Bearer {await app_jwt()}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
@@ -78,9 +152,7 @@ async def sync_installations(_=Depends(_session)):
         async with get_session_factory()() as s:
             # Installations deleted on GitHub → mark uninstalled locally
             local_insts = (
-                await s.scalars(
-                    select(Installation).where(Installation.uninstalled_at.is_(None))
-                )
+                await s.scalars(select(Installation).where(Installation.uninstalled_at.is_(None)))
             ).all()
             for local in local_insts:
                 if local.id not in remote_inst_ids:
@@ -118,9 +190,7 @@ async def sync_installations(_=Depends(_session)):
 
                 # Repos removed from the installation → deactivate
                 local_repos = (
-                    await s.scalars(
-                        select(Repository).where(Repository.installation_id == inst_id)
-                    )
+                    await s.scalars(select(Repository).where(Repository.installation_id == inst_id))
                 ).all()
                 for r in local_repos:
                     r.is_active = r.id in remote_repo_ids

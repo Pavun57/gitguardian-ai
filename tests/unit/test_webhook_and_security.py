@@ -22,25 +22,25 @@ def _webhook_secret(monkeypatch):
     get_settings.cache_clear()
 
 
-def test_valid_signature_passes():
+async def test_valid_signature_passes():
     body = b'{"zen": "hi"}'
-    verify_signature(body, _sign(body, "test-secret"))
+    await verify_signature(body, _sign(body, "test-secret"))
 
 
-def test_wrong_secret_rejected():
+async def test_wrong_secret_rejected():
     body = b'{"zen": "hi"}'
     with pytest.raises(SignatureError):
-        verify_signature(body, _sign(body, "wrong-secret"))
+        await verify_signature(body, _sign(body, "wrong-secret"))
 
 
-def test_tampered_body_rejected():
+async def test_tampered_body_rejected():
     with pytest.raises(SignatureError):
-        verify_signature(b'{"zen": "tampered"}', _sign(b'{"zen": "hi"}', "test-secret"))
+        await verify_signature(b'{"zen": "tampered"}', _sign(b'{"zen": "hi"}', "test-secret"))
 
 
-def test_missing_header_rejected():
+async def test_missing_header_rejected():
     with pytest.raises(SignatureError):
-        verify_signature(b"{}", None)
+        await verify_signature(b"{}", None)
 
 
 def test_scrubber_redacts_keys():

@@ -1,15 +1,18 @@
 """GitHub App authentication: App JWT (RS256) + installation access tokens.
 
+Credentials resolve via core/appconfig (DB → env fallback), so the app can be
+configured from the dashboard without touching .env.
+
 JWT is minted in-process (9-minute expiry, cached). Installation tokens (1h TTL)
 are cached in Redis so the api and worker processes share them.
 """
 
 import time
-from pathlib import Path
 
 import jwt
 import redis.asyncio as aioredis
 
+from core.appconfig import get_config
 from core.config import get_settings
 from core.logging import get_logger
 
@@ -26,24 +29,28 @@ def _get_redis() -> aioredis.Redis:
     return _redis
 
 
-def _private_key() -> str:
-    return Path(get_settings().github_app_private_key_path).read_text()
-
-
-def app_jwt() -> str:
+async def app_jwt() -> str:
     """RS256 JWT authenticating as the GitHub App itself."""
     global _jwt_cache
     now = time.time()
     if _jwt_cache and _jwt_cache[1] > now + 30:
         return _jwt_cache[0]
 
+    app_id = await get_config("github_app_id")
+    private_key = await get_config("github_app_private_key")
+    if not app_id or not private_key:
+        raise RuntimeError(
+            "GitHub App credentials not configured — add them in the dashboard "
+            "(Settings → GitHub App) or .env"
+        )
+
     token = jwt.encode(
         {
             "iat": int(now) - 60,
             "exp": int(now) + 540,  # 9 min, GitHub max is 10
-            "iss": get_settings().github_app_id,
+            "iss": app_id,
         },
-        _private_key(),
+        private_key,
         algorithm="RS256",
     )
     _jwt_cache = (token, now + 540)
@@ -65,7 +72,7 @@ async def installation_token(installation_id: int, http_client=None) -> str:
     resp = await http_client.post(
         f"{get_settings().github_api_base}/app/installations/{installation_id}/access_tokens",
         headers={
-            "Authorization": f"Bearer {app_jwt()}",
+            "Authorization": f"Bearer {await app_jwt()}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         },

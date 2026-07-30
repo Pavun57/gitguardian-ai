@@ -35,6 +35,7 @@ class AgentResponse:
     text: str
     tokens_in: int = 0
     tokens_out: int = 0
+    cost_usd: float = 0.0  # real cost when the CLI reports it (Claude Code does)
 
 
 class AgentBackend(ABC):
@@ -117,6 +118,7 @@ class ClaudeCodeBackend(AgentBackend):
                 text=envelope.get("result", ""),
                 tokens_in=usage.get("input_tokens", 0),
                 tokens_out=usage.get("output_tokens", 0),
+                cost_usd=float(envelope.get("total_cost_usd") or 0.0),
             )
         except json.JSONDecodeError:
             return AgentResponse(text=stdout.decode())

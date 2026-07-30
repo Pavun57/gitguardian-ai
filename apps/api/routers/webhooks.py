@@ -33,7 +33,7 @@ async def github_webhook(request: Request):
     body = await request.body()
 
     try:
-        verify_signature(body, request.headers.get("X-Hub-Signature-256"))
+        await verify_signature(body, request.headers.get("X-Hub-Signature-256"))
     except SignatureError as e:
         await log.awarning("webhook rejected", reason=str(e))
         return Response(status_code=401)
@@ -43,7 +43,7 @@ async def github_webhook(request: Request):
     redis = await _get_redis()
 
     if delivery_id and await is_duplicate_delivery(redis, delivery_id):
-        await log.ainfo("duplicate delivery ignored", delivery_id=delivery_id, event=event)
+        await log.ainfo("duplicate delivery ignored", delivery_id=delivery_id, event_type=event)
         return {"status": "duplicate"}
 
     payload = await request.json()
@@ -54,7 +54,7 @@ async def github_webhook(request: Request):
         await _handle_installation(event, payload)
         return {"status": "ok"}
 
-    await log.ainfo("event ignored", event=event)
+    await log.ainfo("event ignored", event_type=event)
     return {"status": "ignored"}
 
 
@@ -124,5 +124,5 @@ async def _handle_installation(event: str, payload: dict) -> None:
         await session.commit()
 
     await log.ainfo(
-        "installation event processed", event=event, action=action, installation=inst_id
+        "installation event processed", event_type=event, action=action, installation=inst_id
     )

@@ -55,6 +55,7 @@ ignore = ["S101", "B008"]  # S101: asserts in tests; B008: Depends() is the Fast
 [tool.ruff.lint.per-file-ignores]
 "tests/fixtures/vuln_app/**" = ["S", "UP031"]  # deliberately vulnerable fixture
 "evals/datasets/**" = ["S", "UP031"]           # deliberately vulnerable eval samples
+"test_vuln.py" = ["S"]                         # pipeline test bait (agent will fix it)
 "core/db/alembic/versions/**" = ["E501"]       # auto-generated migrations
 "tests/**" = ["S108", "S607", "S603", "ASYNC"]
 

@@ -1,9 +1,14 @@
-"""Classifier node — severity ordering + LLM false-positive filter.
+"""Classifier node — severity ordering + false-positive filtering.
 
-Severity is rule-based first (the scanners emit it); the cheap model only vets
-likely false positives. An LLM failure here never blocks the pipeline — we fall
-back to scanner severity alone.
+Two layers, most-conservative-first:
+  1. Deterministic: findings under fixture/example/dataset paths are dropped
+     by rule — no model judgment involved.
+  2. LLM: vets the rest for likely FPs with a KEEP-when-in-doubt prompt.
+An LLM failure here never blocks the pipeline — we fall back to scanner
+severity alone.
 """
+
+import re
 
 from agents.llm import (
     check_budget,
@@ -18,6 +23,21 @@ from core.logging import get_logger
 from core.schemas import SEVERITY_ORDER, Finding
 
 log = get_logger("classifier")
+
+# Paths that are test fixtures, example code, or eval datasets — findings here
+# are intentionally vulnerable content, not real risk.
+FIXTURE_PATH_RE = re.compile(
+    r"(^|/)(fixtures?|examples?|samples?|testdata|test_data|datasets?|"
+    r"__fixtures__|mocks?)(/|$)|(^|/)evals/|(^|/)benchmarks?/",
+    re.IGNORECASE,
+)
+
+
+def drop_fixture_findings(findings: list[Finding]) -> tuple[list[Finding], list[Finding]]:
+    """Split into (kept, dropped-by-path-rule)."""
+    kept = [f for f in findings if not FIXTURE_PATH_RE.search(f.file_path)]
+    dropped = [f for f in findings if FIXTURE_PATH_RE.search(f.file_path)]
+    return kept, dropped
 
 
 def sort_by_severity(findings: list[Finding]) -> list[Finding]:
@@ -44,11 +64,17 @@ async def filter_false_positives(
         for i, f in enumerate(findings)
     ]
     prompt = (
-        "You are triaging static-analysis findings. For each finding below, decide if it is "
-        "very likely a FALSE POSITIVE (test fixture, example/placeholder credential, "
-        "documentation sample, intentionally vulnerable demo code under a fixtures/ or "
-        "examples/ path).\n\n"
-        "Reply with ONLY a comma-separated list of the indexes of the false positives, "
+        "You are triaging static-analysis security findings for a repository.\n"
+        "Decide which findings are CLEARLY false positives.\n\n"
+        "Rules:\n"
+        "- Only flag a finding if the finding itself is clearly not exploitable "
+        "(e.g. a lockfile hash match, a comment mentioning a pattern, an obvious "
+        "documentation snippet).\n"
+        "- NEVER flag a finding just because a credential 'looks fake' or the repo "
+        "looks like a demo — real leaks often look like that.\n"
+        "- When in doubt, DO NOT flag it. Keeping a real finding is always the "
+        "correct default.\n\n"
+        "Reply with ONLY a comma-separated list of the indexes to drop, "
         "or the word NONE.\n\n"
         f"Findings:\n{summaries}"
     )
@@ -64,7 +90,9 @@ async def filter_false_positives(
     else:
         backend = make_cli_backend(conn)
         resp = await backend.complete(prompt)
-        cost = 0.0  # subscription-billed
+        cost = resp.cost_usd or estimate_cost(
+            settings.classify_model, resp.tokens_in, resp.tokens_out
+        )
         text = resp.text
 
     text = text.strip().upper()
@@ -88,12 +116,22 @@ async def classifier_node(state: GuardianState) -> dict:
     findings = sort_by_severity(state["findings"])
     cost = state.get("llm_cost_usd", 0.0)
 
-    # LLM FP-filter is an enhancement, never a blocker
-    try:
-        findings, added = await filter_false_positives(findings, state["installation_id"], cost)
-        cost += added
-    except Exception as e:
-        await log.awarning("FP filter skipped", error=str(e)[:300])
+    # Layer 1: deterministic fixture-path drop
+    findings, path_dropped = drop_fixture_findings(findings)
+    if path_dropped:
+        await log.ainfo(
+            "fixture-path findings dropped",
+            count=len(path_dropped),
+            files=sorted({f.file_path for f in path_dropped})[:10],
+        )
+
+    # Layer 2: LLM FP-filter (enhancement, never a blocker)
+    if findings:
+        try:
+            findings, added = await filter_false_positives(findings, state["installation_id"], cost)
+            cost += added
+        except Exception as e:
+            await log.awarning("FP filter skipped", error=str(e)[:300])
 
     selected = findings[: settings.max_findings_per_scan]
     if len(findings) > len(selected):
@@ -104,7 +142,7 @@ async def classifier_node(state: GuardianState) -> dict:
         "findings_index": 0,
         "llm_cost_usd": cost,
         "events": [
-            f"classifier: {len(selected)} findings selected "
-            f"(of {len(state['findings'])}), cost ${cost:.4f}"
+            f"classifier: {len(selected)} selected (of {len(state['findings'])} raw, "
+            f"{len(path_dropped)} fixture-path dropped), cost ${cost:.4f}"
         ],
     }

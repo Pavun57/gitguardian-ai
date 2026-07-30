@@ -23,6 +23,7 @@ export default function Nav() {
       <a href="/approvals">Approvals</a>
       <a href="/repos">Repos</a>
       <a href="/settings">Settings</a>
+      <a href="/setup">Setup</a>
       <span className="spacer" />
       {user && (
         <span className="muted">

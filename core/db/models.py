@@ -15,6 +15,19 @@ class Base(DeclarativeBase):
     pass
 
 
+class AppConfig(Base):
+    """Runtime configuration entered via the UI (GitHub App credentials etc.).
+    Values Fernet-encrypted. Env vars remain as fallback (see core/appconfig.py)."""
+
+    __tablename__ = "app_config"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    ciphertext: Mapped[bytes] = mapped_column()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Installation(Base):
     __tablename__ = "installations"
 
