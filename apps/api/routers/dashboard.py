@@ -30,7 +30,30 @@ def _session(request: Request) -> dict:
     return read_session(request)
 
 
-# --- repos ---
+# --- repos / installations ---
+
+
+@router.get("/github/connect-url")
+async def github_connect_url(_=Depends(_session)):
+    """Where to send the user to install the GitHub App (GitHub-hosted OAuth-style flow)."""
+    from core.config import get_settings
+
+    slug = get_settings().github_app_slug
+    if not slug:
+        raise HTTPException(status_code=500, detail="GITHUB_APP_SLUG not configured")
+    return {"url": f"https://github.com/apps/{slug}/installations/new"}
+
+
+@router.get("/installations")
+async def list_installations(_=Depends(_session)):
+    """Installations known via webhook events — populated automatically on install."""
+    async with get_session_factory()() as s:
+        rows = (
+            await s.scalars(
+                select(Installation).where(Installation.uninstalled_at.is_(None))
+            )
+        ).all()
+        return [{"id": r.id, "account": r.account_login} for r in rows]
 
 
 @router.get("/repos")

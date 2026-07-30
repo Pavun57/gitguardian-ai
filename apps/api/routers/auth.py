@@ -31,6 +31,10 @@ def create_session(github_login: str, avatar_url: str) -> str:
 
 
 def read_session(request: Request) -> dict:
+    # Dev convenience: with no OAuth app configured, treat localhost as logged in.
+    # Single-user local dogfooding only — set GITHUB_OAUTH_CLIENT_ID for anything real.
+    if not get_settings().github_oauth_client_id:
+        return {"sub": "dev", "avatar": ""}
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         raise HTTPException(status_code=401, detail="not authenticated")
@@ -43,6 +47,9 @@ def read_session(request: Request) -> dict:
 @router.get("/github")
 async def login():
     s = get_settings()
+    if not s.github_oauth_client_id:
+        # Dev mode: nothing to authorize, go straight to the dashboard
+        return RedirectResponse(f"{s.dashboard_url}/")
     return RedirectResponse(
         "https://github.com/login/oauth/authorize"
         f"?client_id={s.github_oauth_client_id}"

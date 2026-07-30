@@ -12,6 +12,8 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - ../../:/app
+      # Shadow the host's .venv (incompatible binaries) with the image's one
+      - api-venv:/app/.venv
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,6 +36,7 @@ services:
       # (no network, read-only FS, non-root, resource caps). See ADR-0002.
       - /var/run/docker.sock:/var/run/docker.sock
       - gitguardian-workspaces:/workspaces
+      - worker-venv:/app/.venv
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,3 +91,5 @@ volumes:
   postgres-data:
   redis-data:
   gitguardian-workspaces:
+  api-venv:
+  worker-venv:

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     # GitHub App
     github_app_id: str = ""
+    github_app_slug: str = ""  # e.g. "gitguardian-ai" — from the app's settings page URL
     github_app_private_key_path: Path = Path("./secrets/github-app.pem")
     github_webhook_secret: str = ""
     github_app_bot_name: str = "gitguardian-ai"

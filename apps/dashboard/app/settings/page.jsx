@@ -4,60 +4,76 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 
 const AGENTS = {
-  anthropic: {
-    label: "Anthropic API key",
-    hint: "Pay-per-token. Get a key at console.anthropic.com.",
-    placeholder: "sk-ant-...",
-    secret: true,
-  },
   claude_code: {
-    label: "Claude Code (subscription)",
-    hint: "Uses your Claude plan — no API key. Run `claude setup-token` in your terminal and paste the token.",
-    placeholder: "sk-ant-oat...",
-    secret: true,
+    label: "Claude Code",
+    hint: "Uses your Claude subscription via the installed CLI. Log in once with `claude` in your terminal — we detect the rest.",
   },
   codex: {
-    label: "Codex CLI (OpenAI)",
-    hint: "Paste an OpenAI API key, or the contents of ~/.codex/auth.json after `codex login`.",
-    placeholder: "sk-... or {...auth.json...}",
-    secret: true,
+    label: "Codex CLI",
+    hint: "Uses your OpenAI/ChatGPT account via the installed CLI. Log in once with `codex login` — we detect the rest.",
   },
 };
 
 export default function SettingsPage() {
+  const [installations, setInstallations] = useState([]);
   const [installationId, setInstallationId] = useState("");
-  const [provider, setProvider] = useState("claude_code");
-  const [credential, setCredential] = useState("");
-  const [slackUrl, setSlackUrl] = useState("");
+  const [detect, setDetect] = useState(null);
   const [keys, setKeys] = useState([]);
+  const [slackUrl, setSlackUrl] = useState("");
+  const [testing, setTesting] = useState(null);
+  const [testResult, setTestResult] = useState({});
   const [flash, setFlash] = useState(null);
   const [error, setError] = useState(null);
 
-  const load = () => api("/api/keys").then(setKeys).catch(() => {});
+  const loadKeys = () => api("/api/keys").then(setKeys).catch(() => {});
+  const loadInstallations = () =>
+    api("/api/installations").then((rows) => {
+      setInstallations(rows);
+      if (rows.length && !installationId) setInstallationId(String(rows[0].id));
+    }).catch(() => {});
+  const loadDetect = () => api("/api/agents/detect").then(setDetect).catch(() => {});
+
   useEffect(() => {
-    load();
+    loadInstallations();
+    loadKeys();
+    loadDetect();
   }, []);
 
-  const saveKey = async () => {
+  const connectGitHub = async () => {
+    const { url } = await api("/api/github/connect-url");
+    window.open(url, "_blank");
+    // The installation webhook registers it; refresh list after a moment
+    setTimeout(loadInstallations, 5000);
+  };
+
+  const connectAgent = async (provider) => {
     setFlash(null);
     setError(null);
     try {
-      const r = await api("/api/keys", {
+      const r = await api("/api/agents/connect", {
         method: "POST",
-        body: JSON.stringify({
-          installation_id: parseInt(installationId),
-          provider,
-          credential,
-        }),
+        body: JSON.stringify({ installation_id: parseInt(installationId), provider }),
       });
-      setFlash(
-        `${AGENTS[r.provider].label} connected (${r.fingerprint}). Encrypted at rest, never displayed again.`
-      );
-      setCredential("");
-      load();
+      setFlash(`${AGENTS[provider].label} connected (${r.fingerprint}) — detected automatically.`);
+      loadKeys();
     } catch (e) {
       setError(e.message);
     }
+  };
+
+  const testAgent = async (provider) => {
+    setTesting(provider);
+    setError(null);
+    try {
+      const r = await api("/api/agents/test-connection", {
+        method: "POST",
+        body: JSON.stringify({ installation_id: parseInt(installationId) || 0, provider }),
+      });
+      setTestResult((prev) => ({ ...prev, [provider]: r }));
+    } catch (e) {
+      setTestResult((prev) => ({ ...prev, [provider]: { ok: false, error: e.message } }));
+    }
+    setTesting(null);
   };
 
   const saveSlack = async () => {
@@ -75,8 +91,6 @@ export default function SettingsPage() {
     }
   };
 
-  const agent = AGENTS[provider];
-
   return (
     <>
       <h1>Settings</h1>
@@ -84,49 +98,100 @@ export default function SettingsPage() {
       {error && <div className="flash error">{error}</div>}
 
       <div className="panel">
-        <h2>Installation</h2>
-        <label>GitHub App installation ID</label>
-        <input
-          type="text"
-          value={installationId}
-          onChange={(e) => setInstallationId(e.target.value)}
-          placeholder="e.g. 51234567 — from github.com/settings/installations"
-        />
+        <h2>GitHub</h2>
+        {installations.length === 0 ? (
+          <>
+            <p className="muted" style={{ marginBottom: 12 }}>
+              Connect GitHub to start scanning. You'll be sent to GitHub to authorize
+              the app and choose repositories — no IDs to copy.
+            </p>
+            <button onClick={connectGitHub}>Connect GitHub →</button>
+          </>
+        ) : (
+          <>
+            <p className="muted" style={{ marginBottom: 10 }}>
+              Connected installation (registered automatically via webhook):
+            </p>
+            <div className="row">
+              <select
+                value={installationId}
+                onChange={(e) => setInstallationId(e.target.value)}
+                style={{
+                  background: "var(--bg)",
+                  color: "var(--text)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: "8px 12px",
+                  fontFamily: "inherit",
+                }}
+              >
+                {installations.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.account} (#{i.id})
+                  </option>
+                ))}
+              </select>
+              <button className="secondary" onClick={connectGitHub}>
+                + Add another
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="panel">
         <h2>Connect your coding agent</h2>
-        <p className="muted" style={{ marginBottom: 10 }}>
-          Choose how fixes are generated. Installed agents (Claude Code, Codex) bill your
-          own subscription — no API key needed. Credentials are encrypted at rest.
+        <p className="muted" style={{ marginBottom: 14 }}>
+          Fixes are generated by your installed agent, billed to your own subscription.
+          We auto-detect local CLIs and credentials — nothing to paste.
         </p>
 
-        <div className="row" style={{ marginBottom: 12, gap: 8 }}>
-          {Object.entries(AGENTS).map(([key, a]) => (
-            <button
-              key={key}
-              className={provider === key ? "" : "secondary"}
-              onClick={() => setProvider(key)}
-            >
-              {a.label}
-            </button>
-          ))}
-        </div>
-
-        <p className="muted" style={{ marginBottom: 6 }}>{agent.hint}</p>
-        <label>Credential</label>
-        <input
-          type={agent.secret ? "password" : "text"}
-          value={credential}
-          onChange={(e) => setCredential(e.target.value)}
-          placeholder={agent.placeholder}
-        />
-        <button onClick={saveKey} disabled={!installationId || !credential}>
-          Connect agent
-        </button>
+        {Object.entries(AGENTS).map(([provider, a]) => {
+          const d = detect?.[provider];
+          const t = testResult[provider];
+          return (
+            <div className="panel" key={provider} style={{ background: "var(--bg)" }}>
+              <div className="row">
+                <strong>{a.label}</strong>
+                <span className={`badge ${d?.connectable ? "success" : "failed"}`}>
+                  {d ? (d.connectable ? "detected" : "not found") : "…"}
+                </span>
+              </div>
+              <p className="muted" style={{ margin: "8px 0" }}>{a.hint}</p>
+              {d && !d.connectable && (
+                <p className="muted" style={{ marginBottom: 8 }}>
+                  {!d.cli_installed && "CLI not on PATH. "}
+                  {d.cli_installed && !d.credentials_found && "Not logged in. "}
+                </p>
+              )}
+              <div className="row">
+                <button
+                  className="secondary"
+                  disabled={!d?.connectable || testing === provider}
+                  onClick={() => testAgent(provider)}
+                >
+                  {testing === provider ? "Testing…" : "Test connection"}
+                </button>
+                <button
+                  disabled={!d?.connectable || !installationId}
+                  onClick={() => connectAgent(provider)}
+                >
+                  Connect
+                </button>
+              </div>
+              {t && (
+                <p style={{ marginTop: 8 }} className={t.ok ? "" : "flash error"}>
+                  {t.ok
+                    ? `✓ Working — responded in ${t.latency_seconds}s`
+                    : `✗ ${t.error}`}
+                </p>
+              )}
+            </div>
+          );
+        })}
 
         {keys.length > 0 && (
-          <table style={{ marginTop: 16 }}>
+          <table style={{ marginTop: 8 }}>
             <thead>
               <tr>
                 <th>Installation</th>
@@ -145,7 +210,7 @@ export default function SettingsPage() {
                     <button
                       className="danger"
                       onClick={() =>
-                        api(`/api/keys/${k.installation_id}`, { method: "DELETE" }).then(load)
+                        api(`/api/keys/${k.installation_id}`, { method: "DELETE" }).then(loadKeys)
                       }
                     >
                       Disconnect
