@@ -104,6 +104,13 @@ async def cmd_commit(args) -> int:
 
     print(f"🛡 GitGuardian scanning {repo} ({branch})…")
     tracer = await ScanTracer.create("gitguardian.commit", {"repo": repo, "branch": branch})
+    try:
+        return await _commit_flow(args, repo, branch, tracer)
+    finally:
+        tracer.close()  # always end + flush the trace, even on early returns
+
+
+async def _commit_flow(args, repo: str, branch: str, tracer: ScanTracer) -> int:
     final = await run_pipeline(repo, branch, args.message, tracer, "staged")
 
     for event in final.get("events", []):
@@ -146,7 +153,6 @@ async def cmd_commit(args) -> int:
     print(f"  agent cost: ${cost:.4f}")
     if final.get("trace_url"):
         print(f"  trace: {final['trace_url']}")
-    tracer.close()
     return 0
 
 
@@ -155,7 +161,10 @@ async def cmd_scan(args) -> int:
     rc, branch, _ = await _git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo)
     print(f"🛡 GitGuardian scanning {repo} ({branch})…")
     tracer = await ScanTracer.create("gitguardian.scan", {"repo": repo, "branch": branch})
-    final = await run_pipeline(repo, branch, "", tracer, "all_changes")
+    try:
+        final = await run_pipeline(repo, branch, "", tracer, "all_changes")
+    finally:
+        tracer.close()  # end + flush even when there are no findings
     findings = final.get("findings", [])
     if not findings:
         print("✓ no security findings")
@@ -166,7 +175,6 @@ async def cmd_scan(args) -> int:
         print(f"  🔀 {pr.url or pr.branch}")
     if final.get("trace_url"):
         print(f"  trace: {final['trace_url']}")
-    tracer.close()
     return 1 if findings and not final.get("prs") else 0
 
 

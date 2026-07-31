@@ -92,7 +92,7 @@ async def validate_with_rescan(
     be unfixable one-at-a-time: fixing finding A while finding B remains would
     always read as "the fix introduced B".
     """
-    sarif, err = SemgrepRunner().scan(workdir, target_file=finding.file_path)
+    sarif, err = SemgrepRunner().scan(workdir, [finding.file_path])
     if err or not sarif:
         await log.awarning("re-scan failed; skipping validation", error=(err or "")[:300])
         return  # validation is best-effort — the test suite is the harder gate
