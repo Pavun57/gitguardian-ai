@@ -1,5 +1,8 @@
 services:
+  # api/dashboard run as host processes via `gitguardian start`; the container
+  # variants are only for the full-docker stack (`--profile docker`).
   api:
+    profiles: ["docker"]
     build:
       context: ../..
       dockerfile: infrastructure/docker/Dockerfile.api
@@ -20,6 +23,7 @@ services:
         condition: service_started
 
   dashboard:
+    profiles: ["docker"]
     build:
       context: ../../apps/dashboard
       dockerfile: ../../infrastructure/docker/Dockerfile.dashboard
@@ -94,6 +98,9 @@ services:
       NEXTAUTH_SECRET: gitguardian-dev-nextauth-secret
       SALT: gitguardian-dev-salt
       CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_MIGRATION_SSL: "false"
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
       CLICKHOUSE_USER: langfuse
       CLICKHOUSE_PASSWORD: langfuse
       REDIS_CONNECTION_STRING: redis://redis:6379/1
@@ -154,4 +161,3 @@ volumes:
   clickhouse-data:
   minio-data:
   api-venv:
-  gitguardian-workspaces:

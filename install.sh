@@ -98,7 +98,7 @@ $(printf '\033[1;32m')✔ GitGuardian AI installed$(printf '\033[0m')
 
 Everything is one command away:
 
-  gitguardian start       start all services (db, api, worker, dashboard, tunnel)
+  gitguardian start       start all services (db, api, dashboard, langfuse)
   gitguardian status      show what's running + URLs
   gitguardian stop        stop all services
   gitguardian logs api    tail a service log
@@ -108,7 +108,16 @@ Run it now:
 
   gitguardian start
 
-Then open http://localhost:3000/setup — the wizard creates the GitHub App in
-one click and stores your credentials (encrypted). The smee webhook channel is
-enterable in the dashboard (Settings → Webhook tunnel) — no .env editing.
+Then:
+  1. Open http://localhost:3000/settings and connect your coding agent
+     (Claude Code / Codex — auto-detected, no API key needed)
+  2. In any repo, commit with:
+
+       gitguardian commit -m "your message"
+
+     It scans before the commit, fixes findings with your agent, tests the
+     fix in an isolated container, and opens a fix PR via your gh login.
+  3. Watch traces at http://localhost:3100 (Langfuse — login
+     admin@gitguardian.local / admin1234; keys gg-lf-public-dev /
+     gg-lf-secret-dev go in Settings → Observability).
 EOF

@@ -58,7 +58,10 @@ cmd_start() {
   _start_bg dashboard "$GG_HOME/apps/dashboard" npm run dev
 
   say "Starting Langfuse (observability) — first boot takes ~2 min..."
-  docker compose -f "$COMPOSE_FILE" --profile langfuse up -d >/dev/null 2>&1 \
+  # list services explicitly: `up -d` alone would also try to start the
+  # containerized api/dashboard and clash with the host processes' ports
+  docker compose -f "$COMPOSE_FILE" --profile langfuse up -d \
+    clickhouse minio langfuse-web langfuse-worker >/dev/null 2>&1 \
     || warn "langfuse failed to start (optional — tracing will be skipped)"
 
   echo
