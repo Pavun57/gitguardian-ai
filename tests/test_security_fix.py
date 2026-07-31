@@ -5,14 +5,13 @@ imported without any third-party packages installed.
 """
 import asyncio
 import importlib
-import inspect
 import os
 import sys
 import types
 import unittest
 from pathlib import Path
 
-HARDCODED_KEY = "AWYJSPKNSHWIMOADFSC"
+HARDCODED_KEY = "AHENSOWPJIJIJWMSNQWOJGOSN"
 MODULE_PATH = Path(__file__).resolve().parents[1] / "main.py"
 
 
@@ -20,7 +19,7 @@ def _install_fastapi_stub():
     """Register a minimal fake `fastapi` module exposing FastAPI."""
     stub = types.ModuleType("fastapi")
 
-    class FastAPI:  # noqa: D401 - minimal stand-in
+    class FastAPI:  # minimal stand-in
         def __init__(self, *args, **kwargs):
             self.routes = {}
 
