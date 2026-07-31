@@ -55,12 +55,23 @@ _stop() { # name
   fi
 }
 
+_free_port() { # port — kill whatever holds OUR port (ghost from a previous install)
+  if command -v fuser >/dev/null 2>&1 && fuser "$1/tcp" >/dev/null 2>&1; then
+    warn "port $1 already in use — killing the process holding it"
+    fuser -k "$1/tcp" >/dev/null 2>&1 || true
+    sleep 1
+  fi
+}
+
 cmd_start() {
   say "Starting databases..."
   docker compose -f "$COMPOSE_FILE" up -d postgres redis
 
   say "Running migrations..."
   (cd "$GG_HOME" && uv run alembic upgrade head >/dev/null 2>&1) || warn "migrations skipped (db not ready yet?)"
+
+  _free_port 8976   # api
+  _free_port 5678   # dashboard
 
   _start_bg api "$GG_HOME" uv run uvicorn apps.api.main:app --port 8976
   _start_bg dashboard "$GG_HOME/apps/dashboard" npm run dev -- -p 5678
