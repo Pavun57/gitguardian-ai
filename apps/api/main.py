@@ -18,7 +18,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="GitGuardian AI", version="0.1.0", lifespan=lifespan)
 
-# Dashboard runs on a different origin in dev (Next.js :3000)
+# Dashboard runs on a different origin in dev (Next.js :5678)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[get_settings().dashboard_url],

@@ -8,7 +8,7 @@ services:
       dockerfile: infrastructure/docker/Dockerfile.api
     command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
-      - "8000:8000"
+      - "8976:8000"
     env_file: ../../.env
     environment:
       DATABASE_URL: postgresql+asyncpg://gitguardian:gitguardian@postgres:5432/gitguardian
@@ -28,9 +28,9 @@ services:
       context: ../../apps/dashboard
       dockerfile: ../../infrastructure/docker/Dockerfile.dashboard
     ports:
-      - "3000:3000"
+      - "5678:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8976
     depends_on:
       - api
 

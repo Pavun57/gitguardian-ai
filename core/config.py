@@ -58,8 +58,8 @@ class Settings(BaseSettings):
     github_oauth_client_id: str = ""
     github_oauth_client_secret: str = ""
     session_secret: str = ""
-    dashboard_url: str = "http://localhost:3000"
-    api_base_url: str = "http://localhost:8000"
+    dashboard_url: str = "http://localhost:5678"
+    api_base_url: str = "http://localhost:8976"
 
 
 @lru_cache

@@ -29,7 +29,7 @@ Then:
 gitguardian start     # dashboard, API, Postgres, Redis, Langfuse
 ```
 
-Open **http://localhost:3000/settings** → connect your coding agent
+Open **http://localhost:5678/settings** → connect your coding agent
 (auto-detected — Claude Code or Codex, one click, tested).
 
 ## Daily use
@@ -46,7 +46,7 @@ gitguardian commit -m "add payment endpoint"
   (`--force` to override).
 - **Just checking?** `gitguardian scan` runs the pipeline without committing.
 
-## The dashboard (localhost:3000)
+## The dashboard (localhost:5678)
 
 | Page | What you see |
 |---|---|

@@ -109,7 +109,7 @@ Run it now:
   gitguardian start
 
 Then:
-  1. Open http://localhost:3000/settings and connect your coding agent
+  1. Open http://localhost:5678/settings and connect your coding agent
      (Claude Code / Codex — auto-detected, no API key needed)
   2. In any repo, commit with:
 
