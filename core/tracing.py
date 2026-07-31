@@ -9,9 +9,12 @@ Every `gitguardian commit` creates one trace; LLM calls are recorded as
 generations (model, tokens, cost). The trace URL is stored on the scan row
 so the dashboard can deep-link into the Langfuse UI.
 
-API note: langfuse-python v4 replaced v3's `start_as_current_span` /
-`start_as_current_generation` with the unified `start_as_current_observation`
-(as_type="span" | "generation").
+API notes (langfuse-python v4):
+- `start_as_current_span/generation` are gone → unified `start_observation`.
+- We deliberately do NOT use `start_as_current_observation`: LangGraph runs
+  nodes in different contextvars contexts, so a context manager entered at
+  the CLI and exited later crashes with "Token was created in a different
+  Context". Explicit start/end + trace_context linking is context-free.
 """
 
 import contextvars
@@ -65,7 +68,7 @@ class ScanTracer:
 
     def __init__(self, client):
         self._client = client
-        self._cm = None
+        self._root = None
         self.trace_id: str | None = None
 
     @classmethod
@@ -73,10 +76,9 @@ class ScanTracer:
         client = await _get_client()
         tracer = cls(client)
         if client is not None:
-            tracer._cm = client.start_as_current_observation(name=name, as_type="span")
-            span = tracer._cm.__enter__()
-            span.update(metadata=metadata)
-            tracer.trace_id = client.get_current_trace_id()
+            root = client.start_observation(name=name, as_type="span", metadata=metadata)
+            tracer._root = root
+            tracer.trace_id = root.trace_id
         _current.set(tracer)
         return tracer
 
@@ -85,6 +87,9 @@ class ScanTracer:
         if not self.trace_id:
             return None
         return f"{_host}/project/gitguardian/traces/{self.trace_id}"
+
+    def _ctx(self) -> dict | None:
+        return {"trace_id": self.trace_id} if self.trace_id else None
 
     def generation(
         self,
@@ -97,23 +102,28 @@ class ScanTracer:
     ) -> None:
         if not self._client:
             return
-        with self._client.start_as_current_observation(
+        gen = self._client.start_observation(
             name=name,
             as_type="generation",
+            trace_context=self._ctx(),
             model=model,
             input=input,
             usage_details=usage,
             cost_details={"total": cost} if cost is not None else None,
-        ) as gen:
-            gen.update(output=output)
+        )
+        gen.update(output=output)
+        gen.end()
 
     def event(self, name: str, **metadata) -> None:
-        if self._client:
-            with self._client.start_as_current_observation(name=name, as_type="span") as span:
-                span.update(metadata=metadata or None)
+        if not self._client:
+            return
+        span = self._client.start_observation(
+            name=name, as_type="span", trace_context=self._ctx(), metadata=metadata or None
+        )
+        span.end()
 
     def close(self) -> None:
-        if self._cm:
-            self._cm.__exit__(None, None, None)
+        if self._root:
+            self._root.end()
         if self._client:
             self._client.flush()

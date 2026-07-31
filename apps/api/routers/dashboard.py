@@ -284,3 +284,35 @@ async def set_config_value(body: ConfigIn, _=Depends(_session)):
         raise HTTPException(400, f"key must be one of {sorted(_ALLOWED_CONFIG_KEYS)}")
     await set_config(body.key, body.value)
     return {"status": "saved", "key": body.key}
+
+
+class LangfuseTestIn(BaseModel):
+    host: str
+    public_key: str
+    secret_key: str
+
+
+@router.post("/config/test-langfuse")
+async def test_langfuse(body: LangfuseTestIn, _=Depends(_session)):
+    """Validate Langfuse credentials before saving — like the agent test button."""
+    import asyncio
+
+    def _check() -> tuple[bool, str]:
+        try:
+            from langfuse import Langfuse
+
+            client = Langfuse(
+                public_key=body.public_key,
+                secret_key=body.secret_key,
+                host=body.host.rstrip("/"),
+            )
+            ok = client.auth_check()
+            client.flush()
+            return (True, "connected") if ok else (False, "authentication failed — check the keys")
+        except Exception as e:
+            return False, str(e)[:200]
+
+    ok, detail = await asyncio.to_thread(_check)
+    if not ok:
+        raise HTTPException(400, detail)
+    return {"status": "ok", "detail": detail}

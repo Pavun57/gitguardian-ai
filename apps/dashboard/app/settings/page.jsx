@@ -77,6 +77,27 @@ export default function SettingsPage() {
     }
   };
 
+  const [testingLangfuse, setTestingLangfuse] = useState(false);
+  const testLangfuse = async () => {
+    setFlash(null);
+    setError(null);
+    setTestingLangfuse(true);
+    try {
+      await api("/api/config/test-langfuse", {
+        method: "POST",
+        body: JSON.stringify({
+          host: langfuse.host,
+          public_key: langfuse.public_key,
+          secret_key: langfuse.secret_key,
+        }),
+      });
+      setFlash("✅ Langfuse connection OK — save to start tracing");
+    } catch (e) {
+      setError(`Langfuse test failed: ${e.message}`);
+    }
+    setTestingLangfuse(false);
+  };
+
   return (
     <>
       <h1>Settings</h1>
@@ -150,16 +171,24 @@ export default function SettingsPage() {
         <input type="text" value={langfuse.public_key} onChange={(e) => setLangfuse((l) => ({ ...l, public_key: e.target.value }))} placeholder="pk-lf-..." />
         <label>Secret key</label>
         <input type="password" value={langfuse.secret_key} onChange={(e) => setLangfuse((l) => ({ ...l, secret_key: e.target.value }))} placeholder="sk-lf-..." />
-        <button
-          onClick={async () => {
-            await saveConfig("langfuse_host", langfuse.host, "Langfuse host saved");
-            await saveConfig("langfuse_public_key", langfuse.public_key, "Langfuse keys saved");
-            await saveConfig("langfuse_secret_key", langfuse.secret_key, "Langfuse configured — traces will appear on the next scan");
-          }}
-          disabled={!langfuse.public_key || !langfuse.secret_key}
-        >
-          Save Langfuse config
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button
+            onClick={testLangfuse}
+            disabled={!langfuse.public_key || !langfuse.secret_key || testingLangfuse}
+          >
+            {testingLangfuse ? "Testing…" : "Test connection"}
+          </button>
+          <button
+            onClick={async () => {
+              await saveConfig("langfuse_host", langfuse.host, "Langfuse host saved");
+              await saveConfig("langfuse_public_key", langfuse.public_key, "Langfuse keys saved");
+              await saveConfig("langfuse_secret_key", langfuse.secret_key, "Langfuse configured — traces will appear on the next scan");
+            }}
+            disabled={!langfuse.public_key || !langfuse.secret_key}
+          >
+            Save Langfuse config
+          </button>
+        </div>
       </div>
 
       <div className="panel">
