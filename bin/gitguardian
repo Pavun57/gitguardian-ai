@@ -48,6 +48,13 @@ _stop() { # name
   if [ -f "$PID_DIR/$name.pid" ]; then
     local pid; pid=$(cat "$PID_DIR/$name.pid")
     kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    # wait for the tree to actually die — next dev recreates .next while
+    # shutting down, and rm -rf racing it fails with "Directory not empty"
+    for _ in $(seq 1 10); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.5
+    done
+    kill -9 -- "-$pid" 2>/dev/null || true
     rm -f "$PID_DIR/$name.pid"
     say "$name stopped"
   else
@@ -132,9 +139,18 @@ cmd_uninstall() {
   cmd_stop || true
   say "Removing databases, langfuse, and volumes..."
   docker compose -f "$COMPOSE_FILE" --profile langfuse down -v 2>/dev/null || true
+  # down -v occasionally leaves volumes behind — remove ours explicitly
+  docker volume rm docker_postgres_data docker_redis_data docker_clickhouse-data \
+    docker_minio-data docker_api-venv docker_gitguardian-workspaces >/dev/null 2>&1 || true
   docker rmi gitguardian/test-runner:latest 2>/dev/null || true
   say "Removing $GG_HOME and CLI..."
-  rm -rf "$GG_HOME" "$GG_STATE"
+  # retry: a still-dying dev server can recreate files mid-delete
+  for _ in 1 2 3; do
+    rm -rf "$GG_HOME" 2>/dev/null && break
+    sleep 1
+  done
+  [ -d "$GG_HOME" ] && warn "could not fully remove $GG_HOME — delete it manually"
+  rm -rf "$GG_STATE"
   rm -f "$HOME/.local/bin/gitguardian"
   echo
   say "GitGuardian AI uninstalled. Your repos and GitHub PRs are untouched."
