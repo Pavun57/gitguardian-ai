@@ -149,9 +149,15 @@ async def _generate_via_anthropic(state: GuardianState, prompt: str, credential:
     tokens_out = resp.usage_metadata.get("output_tokens", 0) if resp.usage_metadata else 0
     cost = estimate_cost(settings.fix_model, tokens_in, tokens_out)
 
-    if not resp.tool_calls:
-        raise ValueError("model returned no tool call")
-    return resp.tool_calls[0]["args"], cost, tokens_in, tokens_out
+    if resp.tool_calls:
+        return resp.tool_calls[0]["args"], cost, tokens_in, tokens_out
+
+    # Anthropic-compatible gateways (Kimi, etc.) may ignore tool_choice and
+    # answer with plain text — fall back to JSON extraction like the CLI path
+    text = resp.content if isinstance(resp.content, str) else "".join(
+        b.get("text", "") for b in resp.content if isinstance(b, dict) and b.get("type") == "text"
+    )
+    return extract_json(text), cost, tokens_in, tokens_out
 
 
 async def _generate_via_cli(state: GuardianState, prompt: str, conn):

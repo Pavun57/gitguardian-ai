@@ -15,6 +15,7 @@ class GuardianState(TypedDict, total=False):
     workdir: str  # directory the scanner/fix/test nodes operate on (== repo_path locally)
     branch: str  # current branch
     commit_message: str  # user's -m message
+    scan_scope: str  # 'staged' (commit) | 'all_changes' (scan) | 'full'
 
     findings: list[Finding]
     findings_index: int

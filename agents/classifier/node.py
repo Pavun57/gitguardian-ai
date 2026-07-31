@@ -44,6 +44,19 @@ def sort_by_severity(findings: list[Finding]) -> list[Finding]:
     return sorted(findings, key=lambda f: SEVERITY_ORDER[f.severity])
 
 
+def _resp_text(content) -> str:
+    """ChatAnthropic content may be a string or a list of content blocks."""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            parts.append(block.get("text", ""))
+        elif hasattr(block, "text"):
+            parts.append(block.text)
+    return "".join(parts)
+
+
 async def filter_false_positives(
     findings: list[Finding], state_cost: float
 ) -> tuple[list[Finding], float]:
@@ -86,7 +99,7 @@ async def filter_false_positives(
         tokens_in = resp.usage_metadata.get("input_tokens", 0) if resp.usage_metadata else 0
         tokens_out = resp.usage_metadata.get("output_tokens", 0) if resp.usage_metadata else 0
         cost = estimate_cost(settings.classify_model, tokens_in, tokens_out)
-        text = resp.content
+        text = _resp_text(resp.content)
     else:
         backend = make_cli_backend(conn)
         resp = await backend.complete(prompt)

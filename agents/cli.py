@@ -47,7 +47,9 @@ async def repo_root(cwd: str = ".") -> str:
     return out
 
 
-async def run_pipeline(repo: str, branch: str, message: str, tracer: ScanTracer) -> dict:
+async def run_pipeline(
+    repo: str, branch: str, message: str, tracer: ScanTracer, scope: str
+) -> dict:
     """Run the agent pipeline on the working tree. Returns final state."""
     scan_id = str(uuid.uuid4())
 
@@ -61,6 +63,7 @@ async def run_pipeline(repo: str, branch: str, message: str, tracer: ScanTracer)
         "repo_path": repo,
         "branch": branch,
         "commit_message": message,
+        "scan_scope": scope,
         "findings": [],
         "findings_index": 0,
         "fix_attempts": 0,
@@ -101,7 +104,7 @@ async def cmd_commit(args) -> int:
 
     print(f"🛡 GitGuardian scanning {repo} ({branch})…")
     tracer = await ScanTracer.create("gitguardian.commit", {"repo": repo, "branch": branch})
-    final = await run_pipeline(repo, branch, args.message, tracer)
+    final = await run_pipeline(repo, branch, args.message, tracer, "staged")
 
     for event in final.get("events", []):
         await log.ainfo("pipeline", step=event)
@@ -152,7 +155,7 @@ async def cmd_scan(args) -> int:
     rc, branch, _ = await _git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo)
     print(f"🛡 GitGuardian scanning {repo} ({branch})…")
     tracer = await ScanTracer.create("gitguardian.scan", {"repo": repo, "branch": branch})
-    final = await run_pipeline(repo, branch, "", tracer)
+    final = await run_pipeline(repo, branch, "", tracer, "all_changes")
     findings = final.get("findings", [])
     if not findings:
         print("✓ no security findings")

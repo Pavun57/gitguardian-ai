@@ -17,13 +17,15 @@ class SemgrepRunner:
         self.runner = runner or DockerRunner()
         self.image = get_settings().semgrep_image
 
-    def scan(self, repo_path: str, target_file: str | None = None) -> tuple[str | None, str | None]:
-        """Run semgrep over repo_path (or one file). Returns (sarif_json, error).
+    def scan(
+        self, repo_path: str, target_files: list[str] | None = None
+    ) -> tuple[str | None, str | None]:
+        """Run semgrep over repo_path (or specific files). Returns (sarif_json, error).
 
         The workspace is mounted read-only; the SARIF report goes to a rw /out mount.
         """
         settings = get_settings()
-        target = target_file or "."
+        targets = target_files or ["."]
 
         out_dir = tempfile.mkdtemp(prefix="gg-semgrep-out-")
         Path(out_dir).chmod(0o777)  # container runs as uid 1000, dir is created by the worker
@@ -43,7 +45,7 @@ class SemgrepRunner:
                     "--metrics",
                     "off",
                     "--no-git-ignore",
-                    target,
+                    *targets,
                 ],
                 workdir_host_path=repo_path,
                 output_dir_host_path=out_dir,
