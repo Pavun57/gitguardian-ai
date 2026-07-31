@@ -1,4 +1,4 @@
-"""Langfuse tracing (SDK v3+/OTel API) — observability for every pipeline run.
+"""Langfuse tracing (SDK v4/OTel API) — observability for every pipeline run.
 
 Chosen over LangSmith because it's open-source and self-hostable: traces
 (which contain code snippets) stay on your machine. Compose profile
@@ -8,6 +8,10 @@ Chosen over LangSmith because it's open-source and self-hostable: traces
 Every `gitguardian commit` creates one trace; LLM calls are recorded as
 generations (model, tokens, cost). The trace URL is stored on the scan row
 so the dashboard can deep-link into the Langfuse UI.
+
+API note: langfuse-python v4 replaced v3's `start_as_current_span` /
+`start_as_current_generation` with the unified `start_as_current_observation`
+(as_type="span" | "generation").
 """
 
 import contextvars
@@ -69,10 +73,10 @@ class ScanTracer:
         client = await _get_client()
         tracer = cls(client)
         if client is not None:
-            tracer._cm = client.start_as_current_span(name=name)
+            tracer._cm = client.start_as_current_observation(name=name, as_type="span")
             span = tracer._cm.__enter__()
-            span.update_trace(metadata=metadata)
-            tracer.trace_id = span.trace_id
+            span.update(metadata=metadata)
+            tracer.trace_id = client.get_current_trace_id()
         _current.set(tracer)
         return tracer
 
@@ -93,16 +97,19 @@ class ScanTracer:
     ) -> None:
         if not self._client:
             return
-        with self._client.start_as_current_generation(name=name, model=model, input=input) as gen:
-            gen.update(
-                output=output,
-                usage_details=usage,
-                metadata={"cost_usd": cost} if cost is not None else None,
-            )
+        with self._client.start_as_current_observation(
+            name=name,
+            as_type="generation",
+            model=model,
+            input=input,
+            usage_details=usage,
+            cost_details={"total": cost} if cost is not None else None,
+        ) as gen:
+            gen.update(output=output)
 
     def event(self, name: str, **metadata) -> None:
         if self._client:
-            with self._client.start_as_current_span(name=name) as span:
+            with self._client.start_as_current_observation(name=name, as_type="span") as span:
                 span.update(metadata=metadata or None)
 
     def close(self) -> None:
